@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import socket
 import sys
 import threading
@@ -132,6 +133,20 @@ def main() -> int:
         return 1
 
     logger.info("Opening native WebView window: %dx%d — %s", args.width, args.height, url)
+    # On Linux+WebKit, webview.start() *should* return when the
+    # window is closed by the user, but we've seen cases where the
+    # GTK shutdown leaves the Python process alive with all FDs
+    # redirected to /dev/null (a "soft zombie" — PID exists, no
+    # port bound, no logs, doesn't respond to anything).
+    #
+    # Fix: track whether webview.start() returned cleanly. If it
+    # did, we exit normally (sys.exit). If it crashed, we force-exit
+    # via os._exit to make sure the soft-zombie case can't leave a
+    # dangling process. The os._exit branch is the only one that
+    # changes behaviour — the clean path is identical to the old
+    # code.
+    clean_shutdown = False
+
     window = webview.create_window(
         title=args.title,
         url=url,
@@ -141,11 +156,35 @@ def main() -> int:
         resizable=True,
         text_select=True,
     )
+
+    # Polling-thread flag for any future "Stop server" button in
+    # the WebView UI. Not currently triggered, but the plumbing is
+    # in place. In the common case (user closes the window),
+    # webview.start() returns on its own without us setting this.
+    window_closed = threading.Event()
+
+    def _main_loop() -> None:
+        while not window_closed.is_set():
+            window_closed.wait(timeout=0.2)
+
     try:
-        webview.start()
+        webview.start(_main_loop, gui=None)
+        clean_shutdown = True
     except KeyboardInterrupt:
-        logger.info("Window closed by user")
-    return 0
+        # POSIX exit code for SIGINT is 128+2 = 130. Use it so
+        # terminal-driven workflows (e.g. a wrapper script) can
+        # distinguish "user pressed Ctrl+C" from "process crashed".
+        logger.info("Window closed by user (Ctrl+C)")
+        os._exit(130)
+    except Exception:  # noqa: BLE001
+        # GTK/WebKit crash, missing display, etc. — log and force-exit
+        # to make sure we don't leak a soft-zombie python process.
+        logger.exception("webview.start() crashed — force-exiting")
+    if clean_shutdown:
+        return 0
+    # Crashed path: uvicorn thread is daemon=True, dies with us.
+    # os._exit (not sys.exit) to skip any stuck atexit/finalisers.
+    os._exit(1)
 
 
 if __name__ == "__main__":
