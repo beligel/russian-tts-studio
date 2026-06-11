@@ -132,6 +132,7 @@ class TTSPipeline:
         speaker_fallback: str = "xenia",
         quality_check: Optional[bool] = None,
         speed: float = 0.9,
+        prosody: Optional[dict] = None,
     ) -> dict:
         """Synthesize text with quality checks and fallback.
 
@@ -155,6 +156,11 @@ class TTSPipeline:
             logger.info(
                 "Attempting %s with reference %s", self.engine.upper(), reference_audio,
             )
+            # VoxCPM2 reads ``pause_ms_*`` keys straight out of
+            # ``request.metadata`` (see ``utils.prosody.PauseConfig``),
+            # so the prosody dict is passed through as the metadata.
+            # XTTS-v2 ignores these keys entirely.
+            meta = dict(prosody) if prosody else {}
             request = SynthesisRequest(
                 text=text,
                 reference_audio=reference_audio,
@@ -162,6 +168,7 @@ class TTSPipeline:
                 instruct=instruct,
                 output_path=output_path,
                 speed=speed,
+                metadata=meta,
             )
             assert self.synth is not None
             result = self.synth.synthesize(request)

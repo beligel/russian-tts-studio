@@ -108,6 +108,65 @@
             </label>
           </details>
 
+          <details class="advanced" id="prosodyPanel" data-engine-only="voxcpm" hidden>
+            <summary>🎵 Паузы и интонация (только VoxCPM2)</summary>
+            <p class="muted" style="margin:6px 0 10px 0;font-size:12px;">
+              VoxCPM2 не реагирует на запятые и точки при генерации.
+              Можно вставить паузы пост-фактум: выравниваем wav относительно
+              текста (forced aligner) и подрезаем тишиной. 0 = оставить как есть.
+            </p>
+            <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+              <input type="checkbox" id="enableProsody" />
+              <span>Включить расстановку пауз</span>
+            </label>
+            <div class="prosody-grid" id="prosodyGrid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px 12px;margin:6px 0;">
+              <label>
+                <span>Запятая <code>,</code></span>
+                <input type="number" id="pauseMsComma" min="0" max="5000" step="50" value="0" /> мс
+              </label>
+              <label>
+                <span>Точка <code>.</code></span>
+                <input type="number" id="pauseMsPeriod" min="0" max="5000" step="50" value="0" /> мс
+              </label>
+              <label>
+                <span>Восклицательный <code>!</code></span>
+                <input type="number" id="pauseMsExclamation" min="0" max="5000" step="50" value="0" /> мс
+              </label>
+              <label>
+                <span>Вопросительный <code>?</code></span>
+                <input type="number" id="pauseMsQuestion" min="0" max="5000" step="50" value="0" /> мс
+              </label>
+              <label>
+                <span>Многоточие <code>...</code></span>
+                <input type="number" id="pauseMsEllipsis" min="0" max="5000" step="50" value="0" /> мс
+              </label>
+              <label>
+                <span>Точка с запятой <code>;</code></span>
+                <input type="number" id="pauseMsSemicolon" min="0" max="5000" step="50" value="0" /> мс
+              </label>
+              <label>
+                <span>Двоеточие <code>:</code></span>
+                <input type="number" id="pauseMsColon" min="0" max="5000" step="50" value="0" /> мс
+              </label>
+            </div>
+            <div class="row" style="margin-top:8px;">
+              <button class="btn btn-secondary" id="prosodyPresetConservative" type="button">
+                Консервативно
+              </button>
+              <button class="btn btn-secondary" id="prosodyPresetDramatic" type="button">
+                Драматично
+              </button>
+              <button class="btn btn-secondary" id="prosodyPresetOff" type="button">
+                Сбросить (0)
+              </button>
+            </div>
+            <p class="muted" id="prosodyHint" style="font-size:11px;margin:6px 0 0 0;">
+              Пресеты:&nbsp;
+              <em>консервативно</em> — ,=300 ;=400 :=400 .=600 !=?=700 …=900 мс;
+              <em>драматично</em> — ×1.5 от консервативных.
+            </p>
+          </details>
+
           <button class="btn btn-primary btn-large" id="synthBtn">
             ▶ Синтезировать
           </button>

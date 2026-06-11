@@ -346,6 +346,17 @@ async def synthesize(
     enable_postprocess: bool = Form(True),
     enable_quality_check: bool = Form(True),
     engine: str = Form("xtts"),
+    # VoxCPM-only prosody: per-punctuation silence durations in ms.
+    # ``enable_prosody`` is a master switch (off by default). Each
+    # ``pause_ms_*`` is read by ``utils.prosody.PauseConfig.from_metadata``.
+    enable_prosody: bool = Form(False),
+    pause_ms_comma: int = Form(0),
+    pause_ms_semicolon: int = Form(0),
+    pause_ms_colon: int = Form(0),
+    pause_ms_period: int = Form(0),
+    pause_ms_exclamation: int = Form(0),
+    pause_ms_question: int = Form(0),
+    pause_ms_ellipsis: int = Form(0),
 ) -> JSONResponse:
     """Synthesize text using uploaded reference audio (or Silero fallback)."""
     if not text.strip():
@@ -426,11 +437,40 @@ async def synthesize(
     request_id = time.strftime("%H%M%S") + f"-{int(time.time() * 1000) % 100000:05d}"
     logger.info(
         "[req %s] synthesize(engine=%s, text=%r, ref=%s, ref_text=%s chars, "
-        "instruct=%r, fallback=%s, postproc=%s, qc=%s)",
+        "instruct=%r, fallback=%s, postproc=%s, qc=%s, prosody=%s)",
         request_id, engine_norm, text[:80], ref_path,
         len(ref_text_resolved) if ref_text_resolved else 0, instruct,
         enable_fallback, enable_postprocess, enable_quality_check,
+        enable_prosody,
     )
+
+    # Build the prosody metadata dict. Only constructed when explicitly
+    # enabled AND a VoxCPM engine is selected — prosody is a no-op for
+    # XTTS/Silero. ``enable_prosody=False`` (the default) means
+    # ``prosody_meta = {}`` and the pipeline sees no pause overrides.
+    prosody_meta: dict = {}
+    if enable_prosody and engine_norm == "voxcpm":
+        raw = {
+            "comma": pause_ms_comma,
+            "semicolon": pause_ms_semicolon,
+            "colon": pause_ms_colon,
+            "period": pause_ms_period,
+            "exclamation": pause_ms_exclamation,
+            "question": pause_ms_question,
+            "ellipsis": pause_ms_ellipsis,
+        }
+        # Clamp to [0, 5000] ms (5 s — sanity limit) and drop 0s to
+        # keep the dict small and the log line readable.
+        for name, ms in raw.items():
+            ms_i = max(0, min(int(ms or 0), 5000))
+            if ms_i > 0:
+                prosody_meta[f"pause_ms_{name}"] = ms_i
+    elif enable_prosody and engine_norm != "voxcpm":
+        logger.info(
+            "[req %s] enable_prosody=True but engine=%s — prosody is "
+            "VoxCPM-only, ignoring", request_id, engine_norm,
+        )
+
     try:
         result = pipeline.synthesize(
             text=text,
@@ -439,6 +479,7 @@ async def synthesize(
             instruct=instruct,
             speaker_fallback=speaker_fallback,
             speed=speed,
+            prosody=prosody_meta or None,
         )
     except Exception as e:
         logger.exception("[req %s] Synthesis failed: %s", request_id, e)

@@ -14,8 +14,9 @@ output/comparison/**/*.wav
 output/reports/*.json
 output/reports/*.md
 
-# Models
-models/
+# Models (only at repo root — the russian_tts_studio/models/ subdir is
+# Python source code and MUST be tracked)
+/models/
 *.pt
 *.bin
 *.safetensors

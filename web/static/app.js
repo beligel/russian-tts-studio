@@ -219,6 +219,19 @@ $('synthBtn').addEventListener('click', async () => {
   form.append('enable_postprocess', $('enablePostprocess').checked);
   form.append('enable_quality_check', $('enableQualityCheck').checked);
   form.append('engine', $('engineSelect') ? $('engineSelect').value : 'xtts');
+  // Prosody (VoxCPM-only) — always sent, ignored by XTTS/Silero.
+  // Backend already gates on engine=='voxcpm', so we just forward the values.
+  form.append('enable_prosody', $('enableProsody') ? $('enableProsody').checked : false);
+  for (const f of [
+    'pauseMsComma', 'pauseMsSemicolon', 'pauseMsColon', 'pauseMsPeriod',
+    'pauseMsExclamation', 'pauseMsQuestion', 'pauseMsEllipsis',
+  ]) {
+    const el = $(f);
+    if (el) form.append(
+      f.replace(/^pauseMs/, 'pause_ms_').replace(/[A-Z]/g, c => c.toLowerCase()),
+      el.value || '0',
+    );
+  }
 
   showLoader('Синтезирую…');
   $('synthBtn').disabled = true;
@@ -592,4 +605,93 @@ async function loadEngines() {
       );
     }
   }
+  // 3) Show/hide the prosody panel based on the active engine.
+  const activeId = (switchEl && switchEl.querySelector('.engine-btn[aria-pressed="true"]'))?.dataset.engine
+    || (sel && sel.value)
+    || active;
+  applyProsodyEngineVisibility(activeId);
 }
+
+// ---------------------------------------------------------------------------
+// Prosody panel (VoxCPM-only) — show/hide + preset buttons
+// ---------------------------------------------------------------------------
+
+const PROSODY_PRESETS = {
+  // Conservative: comma=300, period=600, !?=700, ellipsis=900, ;:=400
+  conservative: { comma: 300, semicolon: 400, colon: 400, period: 600, exclamation: 700, question: 700, ellipsis: 900 },
+  // Dramatic: ×1.5
+  dramatic:     { comma: 450, semicolon: 600, colon: 600, period: 900, exclamation: 1050, question: 1050, ellipsis: 1350 },
+  // Off: all zeros
+  off:          { comma: 0, semicolon: 0, colon: 0, period: 0, exclamation: 0, question: 0, ellipsis: 0 },
+};
+
+function applyProsodyEngineVisibility(engine) {
+  const panel = $('prosodyPanel');
+  if (!panel) return;
+  const wants = (panel.dataset.engineOnly || '').split(',').map(s => s.trim());
+  const isRelevant = wants.includes(engine);
+  panel.hidden = !isRelevant;
+  // If we just hid the panel because the user switched to XTTS, also
+  // uncheck the master switch so a later re-display starts clean.
+  if (!isRelevant) {
+    const cb = $('enableProsody');
+    if (cb) cb.checked = false;
+  }
+}
+
+function applyProsodyPreset(name) {
+  const p = PROSODY_PRESETS[name];
+  if (!p) return;
+  const map = {
+    comma: 'pauseMsComma', semicolon: 'pauseMsSemicolon', colon: 'pauseMsColon',
+    period: 'pauseMsPeriod', exclamation: 'pauseMsExclamation',
+    question: 'pauseMsQuestion', ellipsis: 'pauseMsEllipsis',
+  };
+  for (const [k, id] of Object.entries(map)) {
+    const el = $(id);
+    if (el) el.value = p[k];
+  }
+  if (name !== 'off') {
+    const cb = $('enableProsody');
+    if (cb) cb.checked = true;
+  } else {
+    const cb = $('enableProsody');
+    if (cb) cb.checked = false;
+  }
+}
+
+(function initProsodyPanel() {
+  // Master checkbox → enable/disable the grid (so the values stay visible
+  // but the user can see at a glance whether prosody is active).
+  const cb = $('enableProsody');
+  const grid = $('prosodyGrid');
+  function refresh() {
+    if (!grid) return;
+    grid.style.opacity = (cb && cb.checked) ? '1' : '0.55';
+    grid.style.pointerEvents = (cb && cb.checked) ? '' : 'none';
+  }
+  if (cb) cb.addEventListener('change', refresh);
+  refresh();
+
+  // Preset buttons
+  for (const [id, name] of [
+    ['prosodyPresetConservative', 'conservative'],
+    ['prosodyPresetDramatic', 'dramatic'],
+    ['prosodyPresetOff', 'off'],
+  ]) {
+    const btn = $(id);
+    if (btn) btn.addEventListener('click', () => applyProsodyPreset(name));
+  }
+
+  // Sync visibility when the engine switch changes. The button click
+  // handler in initEngineSwitch() updates the <select>, so we listen
+  // there too.
+  const sel = $('engineSelect');
+  if (sel) sel.addEventListener('change', () => applyProsodyEngineVisibility(sel.value));
+  const switchEl = $('engineSwitch');
+  if (switchEl) {
+    switchEl.querySelectorAll('.engine-btn').forEach(btn => {
+      btn.addEventListener('click', () => applyProsodyEngineVisibility(btn.dataset.engine));
+    });
+  }
+})();
