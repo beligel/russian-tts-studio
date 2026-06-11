@@ -106,6 +106,73 @@ _model = None
 _device = None
 _load_lock = threading.Lock()
 
+# Marker the auto-detect in web.app sets alongside MMS_FA_SKIP_DOWNLOAD=1
+# so we can distinguish "user opted out" from "we guessed the file is
+# missing". When the file later appears, we only flip the auto-set
+# flag back to "0" — never touch a value the user set explicitly.
+_AUTO_SKIP_MARKER = "MMS_FA_SKIP_DOWNLOAD_AUTO"
+_AUTO_SKIP_MIN_BYTES = 100_000_000  # matches the size floor in web.app
+
+
+def _aligner_model_path() -> Optional[str]:
+    """Return the on-disk path torchaudio expects for MMS_FA weights,
+    or ``None`` if torch can't be imported / cache dir is unknown.
+
+    Mirrors the lookup in ``web.app._auto_disable_mms_fa_download`` —
+    keep them in sync.
+    """
+    try:
+        import torch  # type: ignore[import-not-found]
+        cache_dir = torch.hub.get_dir()
+    except Exception:
+        return None
+    return os.path.join(cache_dir, "checkpoints", "model.pt")
+
+
+def _maybe_unset_auto_skip() -> bool:
+    """If we auto-set ``MMS_FA_SKIP_DOWNLOAD=1`` at import (file was
+    missing) but the file has since appeared on disk, undo it so a
+    later call to ``_load_aligner()`` actually loads the model.
+
+    Returns ``True`` if the flag was reverted (and the cached aligner
+    was reset, if any). Honours the user's intent: if the user
+    themselves set ``MMS_FA_SKIP_DOWNLOAD=1`` we never touch it.
+
+    Race: the aligner singleton ``_aligner`` is reset under
+    ``_load_lock`` so a concurrent ``_load_aligner`` call won't see a
+    half-cleared state. Locking the unset is overkill — env mutation
+    is atomic for our purposes (the loader always re-checks the env
+    under the lock).
+    """
+    if os.environ.get(_AUTO_SKIP_MARKER) != "1":
+        return False
+    model_path = _aligner_model_path()
+    if not model_path or not os.path.exists(model_path):
+        return False
+    try:
+        size_ok = os.path.getsize(model_path) > _AUTO_SKIP_MIN_BYTES
+    except OSError:
+        return False
+    if not size_ok:
+        return False
+    # File is on disk and big enough — clear the auto-set flag and
+    # the marker so we never do this again. Also drop any cached
+    # aligner so the next _load_aligner() actually loads.
+    os.environ.pop("MMS_FA_SKIP_DOWNLOAD", None)
+    os.environ.pop(_AUTO_SKIP_MARKER, None)
+    global _aligner, _tokenizer, _model
+    with _load_lock:
+        _aligner = None
+        _tokenizer = None
+        _model = None
+    logger.info(
+        "MMS_FA aligner weights appeared on disk (%s); auto-set "
+        "MMS_FA_SKIP_DOWNLOAD=1 has been cleared and aligner "
+        "singleton reset — next call will hot-load.",
+        model_path,
+    )
+    return True
+
 
 def _load_aligner():
     """Load torchaudio MMS_FA aligner + uroman. Cached for the process lifetime.
@@ -118,8 +185,15 @@ def _load_aligner():
     the caller can fall back to proportional placement. This is useful
     on networks where ``dl.fbaipublicfiles.com`` is throttled (~1 KB/s
     here — a full download would take 14+ days).
+
+    If the *auto-detect* in ``web.app._auto_disable_mms_fa_download``
+    set the flag at import because the file was missing, this loader
+    re-checks the disk on every call and lifts the flag if the file
+    has since appeared (and resets the cached singleton). A flag set
+    by the user is never touched.
     """
     global _aligner, _tokenizer, _model, _device
+    _maybe_unset_auto_skip()
     if _aligner is not None:
         return
     with _load_lock:

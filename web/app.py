@@ -155,6 +155,14 @@ def _auto_disable_mms_fa_download() -> None:
     both ``uvicorn web.app:app`` and ``python -m web.start`` launch
     paths. Honours the user's intent: never *unset* the var, and never
     set it if the user has already set it to a value.
+
+    We also set ``MMS_FA_SKIP_DOWNLOAD_AUTO=1`` as a marker so the
+    prosody loader (which only runs at request time) can tell the
+    flag came from us, not from the user. If the file later appears
+    on disk — e.g. the user dropped in a 1.3 GB model after the
+    web server was already running — the loader's hot-reload hook
+    will lift the flag and trigger a real load. User-set flags
+    are never touched (no marker → no auto-revert).
     """
     if os.environ.get("MMS_FA_SKIP_DOWNLOAD") is not None:
         return
@@ -167,10 +175,13 @@ def _auto_disable_mms_fa_download() -> None:
     if os.path.exists(model_path) and os.path.getsize(model_path) > 100_000_000:
         return
     os.environ["MMS_FA_SKIP_DOWNLOAD"] = "1"
+    os.environ["MMS_FA_SKIP_DOWNLOAD_AUTO"] = "1"
     logging.getLogger(__name__).warning(
         "MMS_FA aligner weights not found at %s — setting "
         "MMS_FA_SKIP_DOWNLOAD=1 to use proportional pause placement. "
-        "Override by pre-downloading the model or unsetting the var.",
+        "If you download the model later, the loader will hot-reload "
+        "on the next request. Override by pre-downloading the model "
+        "or unsetting the var.",
         model_path,
     )
 
