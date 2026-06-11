@@ -1,0 +1,78 @@
+/* Russian TTS Studio — engine switch button group
+   Loaded LAST via engines.css?v=3 to override any cached styles. */
+
+.engine-switch {
+  display: flex !important;
+  gap: 12px !important;
+  margin: 6px 0 18px 0 !important;
+  padding: 6px !important;
+  background: #131826 !important;
+  border: 2px solid #4a6cf7 !important;
+  border-radius: 14px !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+}
+
+.engine-btn {
+  flex: 1 1 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 4px !important;
+  padding: 18px 14px !important;
+  min-height: 76px !important;
+  background: #1c2236 !important;
+  color: #c8cfe0 !important;
+  border: 2px solid transparent !important;
+  border-radius: 10px !important;
+  font-family: inherit !important;
+  cursor: pointer !important;
+  text-align: center !important;
+  transition: background 120ms, border-color 120ms, color 120ms, transform 80ms !important;
+  user-select: none !important;
+  opacity: 1 !important;
+}
+
+.engine-btn:hover {
+  background: #232c45 !important;
+  border-color: #3a4670 !important;
+}
+
+.engine-btn:active {
+  transform: scale(0.98) !important;
+}
+
+.engine-btn[aria-pressed="true"] {
+  background: #4a6cf7 !important;
+  color: #ffffff !important;
+  border-color: #6b8bff !important;
+  box-shadow: 0 4px 18px rgba(74, 108, 247, 0.45) !important;
+}
+
+.engine-btn[aria-pressed="true"] .engine-note {
+  color: rgba(255, 255, 255, 0.85) !important;
+}
+
+.engine-btn .engine-name {
+  font-size: 18px !important;
+  font-weight: 700 !important;
+  line-height: 1.1 !important;
+  letter-spacing: 0.2px !important;
+}
+
+.engine-btn .engine-note {
+  font-size: 12px !important;
+  font-weight: 400 !important;
+  color: #8a92a8 !important;
+  line-height: 1.2 !important;
+}
+
+/* Kill the "недоступен" ::after that styles.css adds for disabled voxcpm.
+   It uses higher-specificity selector, so we match it. */
+.engine-btn[data-engine="voxcpm"]::after,
+.engine-btn:disabled::after,
+.engine-btn[data-engine="voxcpm"]:disabled::after {
+  content: "" !important;
+  display: none !important;
+}

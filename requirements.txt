@@ -1,0 +1,31 @@
+torch>=2.0.0
+torchaudio>=2.0.0
+numpy>=1.24
+num2words[ru]>=0.5.13
+
+# Primary TTS engine — XTTS-v2 (Coqui, MIT-style but CPML non-commercial).
+# Auto-downloads xtts_v2 (~2 GB) on first use; COQUI_TOS_AGREED=1
+# is set in start.sh to skip the interactive license prompt.
+TTS>=0.22.0
+
+# Silero (lightweight Russian fallback, no cloning) — torch.hub
+# auto-downloads on first use. No extra dep needed.
+
+# Quality evaluation
+openai-whisper>=20231117
+transformers>=4.36.0
+# resemblyzer>=0.1.4        # alternative to WavLM
+
+# Audio post-processing (optional)
+# DeepFilterNet>=0.5        # for neural denoising
+# pyloudnorm>=0.1.1         # for EBU R128 normalization
+
+# Web UI
+fastapi>=0.100.0
+uvicorn>=0.23.0
+python-multipart>=0.0.6
+# Desktop wrapper (optional — only needed for `make desktop`)
+# pywebview>=4.4.0          # cross-platform WebView window
+# On Linux you also need: sudo apt install python3-gobject gtk-3
+# On macOS the system WebKit is used (no extra deps)
+# On Windows the system WebView2 is used (no extra deps)

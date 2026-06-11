@@ -1,0 +1,52 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Outputs
+output/samples/*.wav
+output/comparison/**/*.wav
+output/reports/*.json
+output/reports/*.md
+
+# Models
+models/
+*.pt
+*.bin
+*.safetensors
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project-specific — added 2026-06-11
+.venv-voxcpm/
+.ruff_cache/
+.mypy_cache/
+
+# Logs (regenerated at runtime, not source)
+output/logs/
+output/uploads/
+*.log
+nohup.out
+
+# Whisper/WhisperX models cache
+.whisper_cache/
+
+# Editor / AI tool session state (not project code)
+.qwen/
+
+# Old debug screenshots
+web/static/webui-*.png
+web/static/current-state.png
+web/static/test-screenshot.png

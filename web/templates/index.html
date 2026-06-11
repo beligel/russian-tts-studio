@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
+  <title>Russian TTS Studio — Russian TTS Studio</title>
+  <link rel="stylesheet" href="/static/styles.css?v=4" />
+  <link rel="stylesheet" href="/static/engines.css?v=4" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">🎙️</span>
+      <h1>Russian TTS Studio <span class="muted">Russian TTS Studio</span></h1>
+    </div>
+    <div class="status" id="statusBar">
+      <span class="status-dot" id="statusDot"></span>
+      <span id="statusText">Connecting…</span>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab active" data-tab="synth">🎤 Синтез</button>
+    <button class="tab" data-tab="refs">📚 Референсы</button>
+    <button class="tab" data-tab="comfyui">🔌 ComfyUI</button>
+    <button class="tab" data-tab="tools">🔧 Инструменты</button>
+  </nav>
+
+  <main>
+    <!-- TAB: SYNTHESIS -->
+    <section class="tab-pane active" id="tab-synth">
+      <div class="grid-2">
+        <div class="card">
+          <h2>Текст для синтеза</h2>
+          <textarea
+            id="textInput"
+            placeholder="Введите текст на русском…"
+            rows="8"
+          >Привет! Это тестовая фраза на русском языке. Russian TTS Studio3 умеет клонировать голос по короткому референсу.</textarea>
+
+          <h3 style="margin-top:18px;margin-bottom:6px;color:#c8cfe0;font-size:14px;">⚙️ Голосовой движок</h3>
+          <div class="engine-switch" id="engineSwitch" role="group" aria-label="Голосовой движок" style="display:flex;gap:12px;margin:6px 0 18px 0;padding:6px;background:#131826;border:2px solid #4a6cf7;border-radius:14px;width:100%;box-sizing:border-box;">
+            <button type="button" class="engine-btn" data-engine="xtts" aria-pressed="true" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:18px 14px;min-height:76px;background:#4a6cf7;color:#ffffff;border:2px solid #6b8bff;border-radius:10px;font-family:inherit;font-size:18px;font-weight:700;cursor:pointer;text-align:center;box-shadow:0 4px 18px rgba(74,108,247,0.45);">
+              <span class="engine-name" style="font-size:18px;font-weight:700;line-height:1.1;">🎤 XTTS v2</span>
+              <span class="engine-note" style="font-size:12px;font-weight:400;color:rgba(255,255,255,0.85);line-height:1.2;">русский · zero-shot клон</span>
+            </button>
+            <button type="button" class="engine-btn" data-engine="voxcpm" aria-pressed="false" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:18px 14px;min-height:76px;background:#1c2236;color:#c8cfe0;border:2px solid transparent;border-radius:10px;font-family:inherit;font-size:18px;font-weight:700;cursor:pointer;text-align:center;">
+              <span class="engine-name" style="font-size:18px;font-weight:700;line-height:1.1;">🌊 VoxCPM2</span>
+              <span class="engine-note" style="font-size:12px;font-weight:400;color:#8a92a8;line-height:1.2;">30 языков · 48 кГц</span>
+            </button>
+          </div>
+
+          <div class="row">
+            <label class="grow">
+              <span>Стиль (instruct)</span>
+              <input id="instructInput" type="text" placeholder="напр.: Говори медленно и спокойно" />
+            </label>
+            <label style="width: 100px">
+              <span>Скорость</span>
+              <input id="speedInput" type="number" min="0.5" max="2" step="0.1" value="1.0" />
+            </label>
+          </div>
+
+          <h3>Референсный голос</h3>
+          <div class="ref-picker">
+            <select id="refSelect">
+              <option value="">— Без референса (Silero) —</option>
+            </select>
+            <button class="btn" id="refreshRefs">↻</button>
+            <label class="btn btn-secondary">
+              + Загрузить
+              <input type="file" id="refUpload" accept="audio/*" hidden />
+            </label>
+          </div>
+
+          <details class="advanced">
+            <summary>Расширенные настройки</summary>
+            <label>
+              TTS-движок
+              <select id="engineSelect">
+                <option value="xtts">XTTS v2 (русский, рекомендуется)</option>
+              </select>
+            </label>
+            <label>
+              <input type="checkbox" id="enableFallback" checked />
+              Использовать Silero как fallback
+            </label>
+            <label>
+              <input type="checkbox" id="enablePostprocess" checked />
+              Пост-обработка (trim + normalize)
+            </label>
+            <label>
+              <input type="checkbox" id="enableQualityCheck" checked />
+              Проверка качества (WER + similarity)
+            </label>
+            <label>
+              Silero-спикер (fallback)
+              <select id="speakerFallback">
+                <option value="xenia">xenia (жен)</option>
+                <option value="aidar">aidar (муж)</option>
+                <option value="baya">baya (жен)</option>
+                <option value="kseniya">kseniya (жен)</option>
+                <option value="eugene">eugene (муж)</option>
+              </select>
+            </label>
+          </details>
+
+          <button class="btn btn-primary btn-large" id="synthBtn">
+            ▶ Синтезировать
+          </button>
+        </div>
+
+        <div class="card">
+          <h2>Результат</h2>
+          <div id="resultArea" class="result-empty">
+            <p class="muted">Аудио появится здесь после синтеза</p>
+          </div>
+          <div id="metricsArea" class="metrics hidden">
+            <h3>Метрики</h3>
+            <div class="metric-grid">
+              <div class="metric">
+                <div class="metric-label">Модель</div>
+                <div class="metric-value" id="metricModel">—</div>
+              </div>
+              <div class="metric">
+                <div class="metric-label">Outcome</div>
+                <div class="metric-value" id="metricOutcome">—</div>
+              </div>
+              <div class="metric">
+                <div class="metric-label">WER</div>
+                <div class="metric-value" id="metricWER">—</div>
+              </div>
+              <div class="metric">
+                <div class="metric-label">CER</div>
+                <div class="metric-value" id="metricCER">—</div>
+              </div>
+              <div class="metric">
+                <div class="metric-label">Speaker SIM</div>
+                <div class="metric-value" id="metricSIM">—</div>
+              </div>
+              <div class="metric">
+                <div class="metric-label">RTF</div>
+                <div class="metric-value" id="metricRTF">—</div>
+              </div>
+              <div class="metric">
+                <div class="metric-label">Длительность</div>
+                <div class="metric-value" id="metricDuration">—</div>
+              </div>
+              <div class="metric">
+                <div class="metric-label">Тишина</div>
+                <div class="metric-value" id="metricSilence">—</div>
+              </div>
+            </div>
+            <details>
+              <summary>Транскрипция (Whisper)</summary>
+              <p id="transcriptText" class="transcript">—</p>
+            </details>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB: REFERENCES -->
+    <section class="tab-pane" id="tab-refs">
+      <div class="card">
+        <h2>Управление референсными голосами</h2>
+        <p class="muted">Загрузите 3–10 секунд чистой русской речи для клонирования.</p>
+        <div class="upload-zone" id="dropZone">
+          <p>📁 Перетащите аудио сюда или нажмите для выбора</p>
+          <input type="file" id="refDropInput" accept="audio/*" hidden />
+        </div>
+        <div class="reference-list" id="refList">
+          <p class="muted">Загрузка…</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB: COMFYUI -->
+    <section class="tab-pane" id="tab-comfyui">
+      <div class="card">
+        <h2>ComfyUI интеграция</h2>
+        <div id="comfyuiStatus" class="comfyui-status">Проверка…</div>
+        <div class="row" id="comfyuiActions">
+          <button class="btn" id="comfyuiInstall">📥 Установить плагин</button>
+          <button class="btn" id="comfyuiRefresh">↻ Обновить</button>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Сохранённые спикеры ComfyUI</h3>
+        <div id="comfyuiSpeakers" class="reference-list">
+          <p class="muted">Загрузка…</p>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Синтез через ComfyUI-спикера</h3>
+        <div class="row">
+          <label class="grow">
+            <span>Спикер</span>
+            <select id="comfyuiSpeakerSelect"></select>
+          </label>
+        </div>
+        <textarea
+          id="comfyuiText"
+          placeholder="Текст для синтеза…"
+          rows="3"
+        >Привет, это тест ComfyUI-интеграции.</textarea>
+        <button class="btn btn-primary" id="comfyuiSynthBtn">▶ Синтезировать</button>
+        <div id="comfyuiResult" class="result-empty">
+          <p class="muted">Результат появится здесь</p>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Экспорт нового спикера</h3>
+        <p class="muted">Сохраните аудио в формате, совместимом с плагином ComfyUI.</p>
+        <div class="row">
+          <input type="file" id="comfyuiExportFile" accept="audio/*" />
+          <input type="text" id="comfyuiExportName" placeholder="Имя спикера" />
+        </div>
+        <label>
+          <input type="checkbox" id="comfyuiAutoTranscribe" checked />
+          Авто-транскрипция (Whisper)
+        </label>
+        <button class="btn" id="comfyuiExportBtn">💾 Сохранить пресет</button>
+      </div>
+    </section>
+
+    <!-- TAB: TOOLS -->
+    <section class="tab-pane" id="tab-tools">
+      <div class="grid-2">
+        <div class="card">
+          <h2>Сравнить сходство спикеров</h2>
+          <p class="muted">Загрузите два аудио — узнайте, насколько они похожи по голосу.</p>
+          <label class="file-input-label">
+            Референс:
+            <input type="file" id="simRef" accept="audio/*" />
+          </label>
+          <label class="file-input-label">
+            Синтезированное:
+            <input type="file" id="simSynth" accept="audio/*" />
+          </label>
+          <button class="btn" id="simBtn">🔍 Сравнить</button>
+          <div id="simResult" class="metric-large">—</div>
+        </div>
+        <div class="card">
+          <h2>Оценка качества</h2>
+          <p class="muted">Загрузите аудио и (опционально) оригинальный текст — посчитаем WER.</p>
+          <label class="file-input-label">
+            Аудио:
+            <input type="file" id="evalFile" accept="audio/*" />
+          </label>
+          <label>
+            <span>Оригинальный текст (опционально)</span>
+            <textarea id="evalText" rows="3" placeholder="Оставьте пустым, если нужна только транскрипция"></textarea>
+          </label>
+          <button class="btn" id="evalBtn">📊 Оценить</button>
+          <div id="evalResult"></div>
+        </div>
+        <div class="card">
+          <h2>Пост-обработка аудио</h2>
+          <p class="muted">Trim silence + loudness normalization.</p>
+          <label class="file-input-label">
+            Аудио:
+            <input type="file" id="ppFile" accept="audio/*" />
+          </label>
+          <label>
+            Целевой dBFS:
+            <input type="number" id="ppDbfs" value="-20" step="1" />
+          </label>
+          <button class="btn" id="ppBtn">⚙️ Обработать</button>
+          <div id="ppResult"></div>
+        </div>
+        <div class="card">
+          <h2>Статус системы</h2>
+          <pre id="sysStatus" class="status-pre">Загрузка…</pre>
+          <button class="btn" id="refreshStatus">↻ Обновить</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast hidden"></div>
+  <div id="loader" class="loader hidden">
+    <div class="spinner"></div>
+    <p id="loaderText">Синтез…</p>
+  </div>
+
+  <script src="/static/app.js?v=7"></script>
+</body>
+</html>
