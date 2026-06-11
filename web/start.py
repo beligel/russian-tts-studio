@@ -66,17 +66,31 @@ def main() -> int:
 
     # If --force-server, skip the GUI branch entirely
     if args.force_server:
-        from web.desktop import _start_uvicorn_in_thread, _wait_for_server
+        from web.desktop import (
+            _blocking_wait_with_uvicorn_watchdog,
+            _start_uvicorn_in_thread,
+            _wait_for_server,
+        )
+        import threading
         url = f"http://{args.host}:{args.port}"
         logger.info("Server-only mode. Will be available at %s", url)
-        _start_uvicorn_in_thread(args.host, args.port)
+        uvicorn_thread, uvicorn_server = _start_uvicorn_in_thread(args.host, args.port)
         if not _wait_for_server(args.host, args.port, timeout=60.0):
             logger.error("Server failed to start within 60s")
             return 1
         logger.info("Server is up. Open %s in your browser. Press Ctrl+C to stop.", url)
+        # Use the watchdog wrapper instead of bare threading.Event().wait()
+        # so a dead uvicorn thread surfaces as os._exit(1) — not a
+        # silent "Сервер не отвечает" in the browser. The Ctrl+C
+        # path uses the default KeyboardInterrupt → 130 exit code
+        # only when main() returns; for this branch we accept the
+        # plain 0 return on clean shutdown and rely on the wrapper
+        # to os._exit(1) on crash.
+        stop_event = threading.Event()
         try:
-            import threading
-            threading.Event().wait()
+            _blocking_wait_with_uvicorn_watchdog(
+                stop_event, uvicorn_thread, uvicorn_server,
+            )
         except KeyboardInterrupt:
             pass
         return 0
