@@ -15,6 +15,7 @@ sensitivity and the chunking would interfere with its inference.
 from __future__ import annotations
 
 import logging
+import os
 import re
 import threading
 from dataclasses import dataclass
@@ -34,13 +35,13 @@ logger = logging.getLogger(__name__)
 # to be heard, short enough not to sound robotic.
 
 DEFAULT_PAUSE_MS: dict[str, int] = {
-    "comma": 300,
-    "semicolon": 400,
-    "colon": 400,
-    "period": 600,
-    "exclamation": 700,
-    "question": 700,
-    "ellipsis": 900,
+    "comma": 500,
+    "semicolon": 700,
+    "colon": 700,
+    "period": 900,
+    "exclamation": 1000,
+    "question": 1000,
+    "ellipsis": 1300,
 }
 
 # Mapping char → rule key. Order matters for the ellipsis check (we test
@@ -111,6 +112,12 @@ def _load_aligner():
 
     Downloads are automatic on first call (~1 GB for MMS_FA, ~10 MB for
     uroman). Subsequent calls reuse the in-process model.
+
+    Honours the ``MMS_FA_SKIP_DOWNLOAD`` env var: when set to ``1``,
+    the loader refuses to download and raises ``ModelUnavailable`` so
+    the caller can fall back to proportional placement. This is useful
+    on networks where ``dl.fbaipublicfiles.com`` is throttled (~1 KB/s
+    here — a full download would take 14+ days).
     """
     global _aligner, _tokenizer, _model, _device
     if _aligner is not None:
@@ -118,6 +125,10 @@ def _load_aligner():
     with _load_lock:
         if _aligner is not None:
             return
+        if os.environ.get("MMS_FA_SKIP_DOWNLOAD") == "1":
+            raise ModelUnavailable(
+                "MMS_FA_SKIP_DOWNLOAD=1 set; using proportional fallback"
+            )
         from torchaudio.pipelines import MMS_FA as bundle
         import uroman
 
@@ -134,6 +145,12 @@ def _load_aligner():
             "Loaded MMS_FA aligner (device=%s, sample_rate=%d)",
             _device, bundle.sample_rate,
         )
+
+
+class ModelUnavailable(RuntimeError):
+    """Raised when the forced-aligner model can't be loaded (network
+    blocked, file missing, or MMS_FA_SKIP_DOWNLOAD=1). Callers should
+    catch this and use a proportional fallback."""
 
 
 def _normalise_ru(text: str) -> str:
@@ -267,24 +284,31 @@ def insert_pauses(
     wav_path: Path,
     text: str,
     config: PauseConfig,
-) -> Path:
+) -> tuple[Path, bool]:
     """Insert silence after punctuation marks in ``wav_path`` per ``config``.
 
-    Returns a NEW wav file with pauses spliced in. The original file at
-    ``wav_path`` is left untouched (the caller can decide to overwrite).
+    Returns ``(output_path, degraded)`` where ``degraded`` is True if the
+    forced-aligner failed and we fell back to proportional placement.
 
-    If ``config.is_enabled()`` is False, returns ``wav_path`` unchanged.
+    The original file at ``wav_path`` is left untouched (the caller can
+    decide to overwrite).
 
-    On any alignment failure (model can't load, audio too short, etc.)
-    logs a warning and returns the original path — the caller should
-    not fail the synthesis just because prosody enhancement failed.
+    If ``config.is_enabled()`` is False, returns ``(wav_path, False)``
+    unchanged.
+
+    Two strategies are tried in order:
+      1. Forced alignment via MMS_FA — exact positions, requires
+         ~1 GB model download from a CDN that may throttle heavily.
+      2. Proportional fallback — distribute the punctuation positions
+         evenly across the audio by char index. Imprecise but works
+         without any model.
     """
     if not config.is_enabled():
-        return wav_path
+        return wav_path, False
 
     if not wav_path.exists():
         logger.warning("insert_pauses: wav not found: %s", wav_path)
-        return wav_path
+        return wav_path, False
 
     # 1) Locate punctuation positions in text
     punct_positions: list[tuple[int, int, str]] = []  # (char_idx, ms, ch)
@@ -313,43 +337,40 @@ def insert_pauses(
         i += 1
 
     if not punct_positions:
-        return wav_path
+        return wav_path, False
 
-    # 2) Forced-align text against audio to get per-char timestamps
+    # 2) Try forced alignment; fall back to proportional on any failure
+    insert_points: list[tuple[float, int]] = []
+    degraded = False
     try:
         char_times = _align_text(wav_path, text)
+        for char_idx, ms, _ch in punct_positions:
+            # Walk back to the previous alphanum char
+            j = char_idx - 1
+            while j >= 0 and j not in char_times:
+                j -= 1
+            if j < 0:
+                continue
+            _, end_t = char_times[j]
+            insert_points.append((end_t, ms))
     except Exception as e:
         logger.warning(
-            "insert_pauses: alignment failed (%s: %s) — skipping prosody",
+            "insert_pauses: forced aligner unavailable (%s: %s) — "
+            "using proportional fallback",
             type(e).__name__, e,
         )
-        return wav_path
-
-    if not char_times:
-        logger.warning("insert_pauses: aligner produced no timestamps")
-        return wav_path
-
-    # 3) For each punctuation, find the END time of the preceding char
-    insert_points: list[tuple[float, int]] = []
-    for char_idx, ms, _ch in punct_positions:
-        # Walk back to the previous alphanum char
-        j = char_idx - 1
-        while j >= 0 and j not in char_times:
-            j -= 1
-        if j < 0:
-            continue
-        _, end_t = char_times[j]
-        insert_points.append((end_t, ms))
+        degraded = True
+        insert_points = _proportional_punct_timestamps(text, punct_positions, wav_path)
 
     if not insert_points:
-        return wav_path
+        return wav_path, degraded
 
-    # 4) Splice silences into the wav
+    # 3) Splice silences into the wav
     try:
         wav, sr = sf.read(str(wav_path), dtype="float32", always_2d=False)
     except Exception as e:
         logger.warning("insert_pauses: cannot read wav: %s", e)
-        return wav_path
+        return wav_path, degraded
 
     if wav.ndim == 1:
         channels = 1
@@ -363,7 +384,7 @@ def insert_pauses(
     insert_points = [(t, ms) for t, ms in insert_points if t < total_sec - 0.01]
 
     if not insert_points:
-        return wav_path
+        return wav_path, degraded
 
     # Build a new sample array by interleaving segments
     samples_per_ms = sr / 1000.0
@@ -386,8 +407,32 @@ def insert_pauses(
     # Overwrite in place — caller passed an output_path that they own
     sf.write(str(wav_path), new_wav, sr, subtype="FLOAT")
     new_dur = new_wav.shape[0] / sr
+    mode = "proportional" if degraded else "aligned"
     logger.info(
-        "insert_pauses: %d pauses inserted, %.2fs → %.2fs (+%.0fms total)",
-        len(insert_points), total_sec, new_dur, int((new_dur - total_sec) * 1000),
+        "insert_pauses [%s]: %d pauses inserted, %.2fs → %.2fs (+%.0fms total)",
+        mode, len(insert_points), total_sec, new_dur, int((new_dur - total_sec) * 1000),
     )
-    return wav_path
+    return wav_path, degraded
+
+
+def _proportional_punct_timestamps(
+    text: str,
+    punct_positions: list[tuple[int, int, str]],
+    wav_path: Path,
+) -> list[tuple[float, int]]:
+    """Distribute punctuation positions evenly across the audio duration.
+
+    Used when the forced aligner can't be loaded. Each punctuation's
+    timestamp is set to ``char_idx / len(text) * total_sec`` — coarse
+    but better than no pauses at all.
+
+    Returns ``[(time_sec, pause_ms), ...]``.
+    """
+    try:
+        info = sf.info(str(wav_path))
+        total_sec = float(info.frames) / float(info.samplerate)
+    except Exception as e:
+        logger.warning("proportional fallback: cannot read wav: %s", e)
+        return []
+    n = max(1, len(text))
+    return [((idx / n) * total_sec, ms) for idx, ms, _ in punct_positions]

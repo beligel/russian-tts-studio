@@ -221,6 +221,7 @@ class TTSPipeline:
             "metrics": metrics,
             "outcome": outcome,
             "final_path": final_path,
+            "prosody_degraded": bool((result.metadata or {}).get("prosody_degraded")),
         }
 
     def _quality_check(

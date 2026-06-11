@@ -32,6 +32,10 @@ def _reexec_for_engine(engine: str) -> None:
     """
     if os.environ.get("RUSSIAN_TTS_NO_AUTO_REEXEC") == "1":
         return
+    # If the user opted out of MMS_FA downloads (env var MMS_FA_SKIP_DOWNLOAD=1
+    # was set before startup), propagate it into the child so the new venv
+    # sees the same flag. We never *set* this automatically — only pass
+    # through the user's intent.
     venvs = {
         "xtts":   PROJECT_ROOT / ".venv"        / "bin" / "python",
         "voxcpm": PROJECT_ROOT / ".venv-voxcpm" / "bin" / "python",
@@ -139,6 +143,40 @@ REFERENCES_DIR.mkdir(parents=True, exist_ok=True)
 
 ALLOWED_AUDIO_EXTENSIONS = {".wav", ".mp3", ".flac", ".ogg", ".m4a", ".opus"}
 MAX_UPLOAD_SIZE = 50 * 1024 * 1024  # 50 MB
+
+
+def _auto_disable_mms_fa_download() -> None:
+    """If the MMS_FA model weights are missing and the user hasn't
+    explicitly opted in to a download, set ``MMS_FA_SKIP_DOWNLOAD=1`` so
+    the prosody post-processor falls back to proportional placement
+    instead of hanging for hours on a throttled CDN.
+
+    Runs at module import — same logic as ``web.start`` — so it covers
+    both ``uvicorn web.app:app`` and ``python -m web.start`` launch
+    paths. Honours the user's intent: never *unset* the var, and never
+    set it if the user has already set it to a value.
+    """
+    if os.environ.get("MMS_FA_SKIP_DOWNLOAD") is not None:
+        return
+    try:
+        import torch  # type: ignore[import-not-found]
+        cache_dir = torch.hub.get_dir()
+    except Exception:
+        return
+    model_path = os.path.join(cache_dir, "checkpoints", "model.pt")
+    if os.path.exists(model_path) and os.path.getsize(model_path) > 100_000_000:
+        return
+    os.environ["MMS_FA_SKIP_DOWNLOAD"] = "1"
+    logging.getLogger(__name__).warning(
+        "MMS_FA aligner weights not found at %s — setting "
+        "MMS_FA_SKIP_DOWNLOAD=1 to use proportional pause placement. "
+        "Override by pre-downloading the model or unsetting the var.",
+        model_path,
+    )
+
+
+_auto_disable_mms_fa_download()
+
 
 app = FastAPI(
     title="XTTS Russian TTS",
@@ -526,6 +564,7 @@ async def synthesize(
         "outcome": result["outcome"].value,
         "metrics": metrics_dict,
         "transcript": metrics_dict.get("transcript", ""),
+        "prosody_degraded": bool(result.get("prosody_degraded", False)),
     })
 
 

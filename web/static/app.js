@@ -288,7 +288,16 @@ async function waitForServer(maxSeconds) {
 function renderResult(result) {
   const area = $('resultArea');
   area.classList.remove('result-empty');
+  let prosodyBanner = '';
+  if (result.prosody_degraded) {
+    prosodyBanner = `
+      <div class="warning-banner" style="background:#fff3cd;border:1px solid #ffc107;padding:8px 12px;border-radius:6px;margin-bottom:8px;font-size:0.92em;">
+        ⚠️ <strong>Просодия в деградированном режиме:</strong> forced-aligner (MMS_FA) недоступен — паузы расставлены пропорционально по длительности аудио, а не по реальным позициям слов. Скачайте <code>model.pt</code> с <a href="https://huggingface.co/facebook/mms-300m" target="_blank">HuggingFace</a> и положите в <code>~/.cache/torch/hub/checkpoints/</code>, чтобы включить точное выравнивание.
+      </div>
+    `;
+  }
   area.innerHTML = `
+    ${prosodyBanner}
     <audio class="audio-player" controls src="${result.audio_url}"></audio>
     <p>
       <a class="download-link" href="${result.audio_url}" download>⬇ Скачать .wav</a>
@@ -617,10 +626,10 @@ async function loadEngines() {
 // ---------------------------------------------------------------------------
 
 const PROSODY_PRESETS = {
-  // Conservative: comma=300, period=600, !?=700, ellipsis=900, ;:=400
-  conservative: { comma: 300, semicolon: 400, colon: 400, period: 600, exclamation: 700, question: 700, ellipsis: 900 },
+  // Conservative: comma=500, period=900, !?=1000, ellipsis=1300, ;:=700
+  conservative: { comma: 500, semicolon: 700, colon: 700, period: 900, exclamation: 1000, question: 1000, ellipsis: 1300 },
   // Dramatic: ×1.5
-  dramatic:     { comma: 450, semicolon: 600, colon: 600, period: 900, exclamation: 1050, question: 1050, ellipsis: 1350 },
+  dramatic:     { comma: 750, semicolon: 1050, colon: 1050, period: 1350, exclamation: 1500, question: 1500, ellipsis: 1950 },
   // Off: all zeros
   off:          { comma: 0, semicolon: 0, colon: 0, period: 0, exclamation: 0, question: 0, ellipsis: 0 },
 };

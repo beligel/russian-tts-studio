@@ -278,22 +278,27 @@ class VoxCPMSynthesizer:
                 self.sample_rate,
                 subtype="FLOAT",
             )
-            # Optional prosody: splice silence at comma/period/etc. by
-            # forced-aligning the wav against the original Cyrillic text.
-            # ``insert_pauses`` is a no-op if all pause_ms_* are 0; any
-            # alignment failure is swallowed inside (warns + returns the
-            # path unchanged) so a broken aligner never breaks synthesis.
+            # Optional prosody: splice silence at comma/period/etc.
+            # by forced-aligning the wav against the original Cyrillic
+            # text. ``insert_pauses`` is a no-op if all pause_ms_* are
+            # 0; on forced-aligner failure it falls back to proportional
+            # placement and returns ``degraded=True`` so we can surface
+            # that in the response metadata for the UI.
+            prosody_degraded = False
             try:
                 pause_cfg = PauseConfig.from_metadata(
                     request.metadata or {}
                 )
                 if pause_cfg.is_enabled():
-                    insert_pauses(output_path, request.text, pause_cfg)
+                    _, prosody_degraded = insert_pauses(
+                        output_path, request.text, pause_cfg,
+                    )
             except Exception as e:
                 logger.warning(
                     "Prosody post-processing skipped: %s: %s",
                     type(e).__name__, e,
                 )
+                prosody_degraded = True
             # Re-measure from disk so reported duration matches the
             # post-pause file (insert_pauses may have appended silences).
             try:
@@ -305,6 +310,12 @@ class VoxCPMSynthesizer:
             gen_time = time.time() - start_time
             rtf = gen_time / duration if duration > 0 else 0.0
 
+            result_meta = dict(request.metadata or {})
+            if pause_cfg.is_enabled():
+                result_meta["prosody_applied"] = True
+                if prosody_degraded:
+                    result_meta["prosody_degraded"] = True
+
             result = SynthesisResult(
                 audio_path=output_path,
                 duration_sec=duration,
@@ -313,7 +324,7 @@ class VoxCPMSynthesizer:
                 model=self.model_name,
                 text=request.text,
                 reference=ref_path,
-                metadata=request.metadata,
+                metadata=result_meta,
             )
             logger.info(
                 "VoxCPM2 synthesis done: %.2fs audio in %.2fs (RTF=%.3f, sr=%d)",
