@@ -292,7 +292,7 @@ function renderResult(result) {
   if (result.prosody_degraded) {
     prosodyBanner = `
       <div class="warning-banner" style="background:#fff3cd;border:1px solid #ffc107;padding:8px 12px;border-radius:6px;margin-bottom:8px;font-size:0.92em;">
-        ⚠️ <strong>Просодия в деградированном режиме:</strong> forced-aligner (MMS_FA) недоступен — паузы расставлены пропорционально по длительности аудио, а не по реальным позициям слов. Скачайте <code>model.pt</code> с <a href="https://huggingface.co/facebook/mms-300m" target="_blank">HuggingFace</a> и положите в <code>~/.cache/torch/hub/checkpoints/</code>, чтобы включить точное выравнивание.
+        ⚠️ <strong>Просодия в деградированном режиме:</strong> forced-aligner (MMS_FA) недоступен — паузы расставлены пропорционально по длительности аудио, а не по реальным позициям слов. Скачайте <code>model.pt</code> через <a href="https://web.archive.org/web/2024/https://dl.fbaipublicfiles.com/mms/torchaudio/ctc_alignment_mling_uroman/model.pt" target="_blank">Wayback Machine</a> (прямой CDN троттлится до ~1 КБ/с) и положите в <code>~/.cache/torch/hub/checkpoints/</code>, чтобы включить точное выравнивание.
       </div>
     `;
   }
