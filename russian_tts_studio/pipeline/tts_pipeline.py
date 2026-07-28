@@ -155,6 +155,10 @@ class TTSPipeline:
         self.initialize()
 
         do_check = quality_check if quality_check is not None else self.config.enable_quality_check
+        # Normalize line endings: \r\n (from browser textarea) → \n.
+        # VoxCPM2 can truncate text at \r — it treats \r as end-of-input
+        # on some codepaths, producing audio that cuts off mid-sentence.
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
         text = normalize_numbers(text, language="ru")
 
         result: Optional[SynthesisResult] = None
@@ -458,6 +462,9 @@ class TTSPipeline:
                 on_progress(i + 1, total, seg)
             # Apply aliases to the segment text.
             text = self._apply_aliases(seg.text, seg.state.aliases)
+            # Normalize \r\n → \n (browser textarea sends \r\n; VoxCPM2
+            # can truncate at \r).
+            text = text.replace("\r\n", "\n").replace("\r", "\n")
             # Apply stress marks (same mechanism as aliases — replace
             # the plain word with its stressed form).
             text = self._apply_stresses(text, seg.state.stresses)
