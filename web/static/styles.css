@@ -274,20 +274,97 @@ textarea { width: 100%; resize: vertical; }
 }
 .text-toolbar .btn-sm { white-space: nowrap; }
 
-/* Style preset buttons — wrap on small screens */
-.style-presets {
+/* Style strip — unified presets + speed + instruct */
+.style-strip {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.style-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.style-chips {
   display: flex;
   gap: 6px;
-  margin: 10px 0;
   flex-wrap: wrap;
+}
+.speed-slider {
+  display: flex;
   align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  min-width: 180px;
 }
-.style-presets .preset-btn { white-space: nowrap; }
-.style-presets .preset-btn.active {
-  background: var(--primary);
+.speed-slider input[type=range] { flex: 1; accent-color: var(--primary); }
+.instruct-details {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.instruct-details summary { cursor: pointer; user-select: none; }
+.instruct-details input[type=text] {
+  width: 100%;
+  margin-top: 6px;
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 13px;
+}
+
+/* Takes history — each synth/regenerate adds a take, not overwriting */
+.takes-area {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.takes-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+.take {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-3);
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+.take:hover { border-color: #3a4358; }
+.take.active {
   border-color: var(--primary);
-  color: white;
+  background: rgba(99,102,241,.12);
 }
+.take .take-num {
+  font-weight: 700;
+  color: var(--primary);
+  min-width: 28px;
+  text-align: center;
+}
+.take .take-info { color: var(--text); }
+.take .take-meta { color: var(--text-muted); font-size: 11px; }
+.take .take-actions { display: flex; gap: 4px; }
+.take .take-actions button {
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 2px 4px;
+}
+.take .take-actions button:hover { color: var(--text); }
 
 /* Voice engine toggle — large, always-visible button group */
 .engine-switch {

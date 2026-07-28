@@ -451,7 +451,82 @@ async function waitForServer(maxSeconds) {
   return false;
 }
 
-function renderResult(result) {
+// --- Takes history ---
+// Each synth / regenerateSelection call adds a take. Takes are kept
+// in memory (session-only). Clicking a take loads its player + QC.
+let takes = [];
+let takeCounter = 0;
+let activeTakeId = null;
+
+function addTake(result, context) {
+  // context: { type: 'full'|'selection', textPreview: string }
+  takeCounter++;
+  const take = {
+    id: takeCounter,
+    result: result,
+    context: context,
+    timestamp: new Date(),
+  };
+  takes.unshift(take);  // newest first
+  // Keep max 20 takes to avoid memory bloat
+  if (takes.length > 20) takes = takes.slice(0, 20);
+  activeTakeId = take.id;
+  renderTakes();
+  renderActiveTake();
+}
+
+function renderTakes() {
+  const list = $('takesList');
+  const area = $('takesArea');
+  if (!list || !area) return;
+  if (!takes.length) {
+    area.classList.add('hidden');
+    return;
+  }
+  area.classList.remove('hidden');
+  list.innerHTML = '';
+  for (const take of takes) {
+    const el = document.createElement('div');
+    el.className = 'take' + (take.id === activeTakeId ? ' active' : '');
+    const r = take.result;
+    const timeStr = take.timestamp.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const dur = r.duration_sec ? r.duration_sec.toFixed(1) + 's' : '—';
+    const typeLabel = take.context.type === 'selection' ? 'выделение' : 'весь текст';
+    const preview = take.context.textPreview
+      ? take.context.textPreview.substring(0, 40) + (take.context.textPreview.length > 40 ? '…' : '')
+      : '';
+    el.innerHTML = `
+      <span class="take-num">#${take.id}</span>
+      <div class="take-info">
+        <div>${typeLabel}${preview ? ' · ' + preview : ''}</div>
+        <div class="take-meta">${dur} · ${r.outcome || '—'} · ${timeStr}</div>
+      </div>
+      <div class="take-actions">
+        <button title="Слушать" data-action="play">▶</button>
+        <button title="Скачать" data-action="download">⬇</button>
+      </div>
+    `;
+    el.addEventListener('click', (e) => {
+      const actionBtn = e.target.closest('[data-action]');
+      if (actionBtn) {
+        e.stopPropagation();
+        if (actionBtn.dataset.action === 'download') {
+          window.open(r.audio_url, '_blank');
+        }
+        // play = fall through to selecting the take
+      }
+      activeTakeId = take.id;
+      renderTakes();
+      renderActiveTake();
+    });
+    list.appendChild(el);
+  }
+}
+
+function renderActiveTake() {
+  const take = takes.find(t => t.id === activeTakeId);
+  if (!take) return;
+  const result = take.result;
   const area = $('resultArea');
   area.classList.remove('result-empty');
   let prosodyBanner = '';
@@ -464,7 +539,7 @@ function renderResult(result) {
   }
   area.innerHTML = `
     ${prosodyBanner}
-    <audio class="audio-player" controls src="${result.audio_url}"></audio>
+    <audio class="audio-player" controls src="${result.audio_url}" autoplay></audio>
     <p>
       <a class="download-link" href="${result.audio_url}" download>⬇ Скачать .wav</a>
       <span class="muted">(${result.duration_sec}s • ${result.generation_time_sec}s gen • RTF ${result.rtf})</span>
@@ -486,7 +561,13 @@ function renderResult(result) {
   $('metricDuration').textContent = fmtSeconds(result.duration_sec);
   $('metricSilence').textContent = m.silence_ratio != null ? fmtPct(m.silence_ratio) : '—';
   $('transcriptText').textContent = m.transcript || '(нет транскрипции)';
-  showToast(`Готово: ${result.outcome}`, result.outcome === 'pass' ? 'success' : 'warn');
+  showToast(`Готово: ${result.outcome} (take #${activeTakeId})`, result.outcome === 'pass' ? 'success' : 'warn');
+}
+
+function renderResult(result) {
+  // Legacy entry point — now adds a take with type 'full'.
+  const textPreview = $('textInput') ? $('textInput').value.substring(0, 60) : '';
+  addTake(result, { type: 'full', textPreview });
 }
 
 // ---------------------------------------------------------------------------
@@ -888,8 +969,10 @@ function applyStylePreset(presetName) {
   if (!p) return;
   const inst = $('instructInput');
   const spd = $('speedInput');
+  const spdVal = $('speedValue');
   if (inst) inst.value = p.instruct;
   if (spd) spd.value = p.speed;
+  if (spdVal) spdVal.textContent = parseFloat(p.speed).toFixed(2);
   // Highlight the active preset button
   document.querySelectorAll('.preset-btn').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.preset === presetName);
@@ -1010,7 +1093,7 @@ async function regenerateSelection() {
   showLoader(`Перегенерирую выделенный фрагмент (${selected.length} симв.)…`);
   try {
     const result = await synthesizeWithRetry(form);
-    renderResult(result);
+    addTake(result, { type: 'selection', textPreview: selected.substring(0, 60) });
   } catch (e) {
     showToast(`Ошибка перегенерации: ${e.message}`, 'error');
   } finally {
@@ -1047,6 +1130,31 @@ document.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('.preset-btn').forEach(btn => {
     btn.addEventListener('click', () => applyStylePreset(btn.dataset.preset));
   });
+
+  // Speed slider — update display value on change
+  const spd = $('speedInput');
+  const spdVal = $('speedValue');
+  if (spd && spdVal) {
+    spd.addEventListener('input', () => {
+      spdVal.textContent = parseFloat(spd.value).toFixed(2);
+    });
+  }
+
+  // Clear takes button
+  const clearTakes = $('clearTakesBtn');
+  if (clearTakes) {
+    clearTakes.addEventListener('click', () => {
+      takes = [];
+      activeTakeId = null;
+      renderTakes();
+      const area = $('resultArea');
+      if (area) {
+        area.classList.add('result-empty');
+        area.innerHTML = '<p class="muted">Аудио появится здесь после синтеза</p>';
+      }
+      $('metricsArea').classList.add('hidden');
+    });
+  }
 
   // Keyboard shortcut: Ctrl+Shift+A (A for Accent) on the textarea.
   const ta = $('textInput');

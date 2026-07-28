@@ -56,28 +56,33 @@
             rows="16"
           >Привет! Это тестовая фраза на русском языке. Russian TTS Studio3 умеет клонировать голос по короткому референсу.</textarea>
 
-          <div class="row">
-            <label class="grow">
-              <span>Стиль (instruct)</span>
+          <!-- Style strip: presets + speed + instruct (unified) -->
+          <div class="style-strip">
+            <div class="strip-label">
+              <span>Стиль</span>
+            </div>
+            <div class="style-row">
+              <div class="chips style-chips">
+                <button class="btn btn-secondary btn-sm preset-btn" data-preset="normal" title="Обычная речь">Обычно</button>
+                <button class="btn btn-secondary btn-sm preset-btn" data-preset="slow_solemn" title="Медленно, торжественно">Медленно • торжественно</button>
+                <button class="btn btn-secondary btn-sm preset-btn" data-preset="slow" title="Медленно, спокойно">Медленно</button>
+                <button class="btn btn-secondary btn-sm preset-btn" data-preset="fast" title="Быстро, энергично">Быстро</button>
+                <button class="btn btn-secondary btn-sm preset-btn" data-preset="cheerful" title="Весело, бодро">Весело</button>
+                <button class="btn btn-secondary btn-sm preset-btn" data-preset="sad" title="Грустно, печально">Грустно</button>
+                <button class="btn btn-secondary btn-sm preset-btn" data-preset="nervous" title="Нервно, тревожно">Нервно</button>
+                <button class="btn btn-secondary btn-sm preset-btn" data-preset="whisper" title="Шёпотом">Шёпот</button>
+                <button class="btn btn-secondary btn-sm preset-btn" data-preset="narrator" title="Аудиокнига, рассказчик">Аудиокнига</button>
+              </div>
+              <label class="speed-slider">
+                <span class="muted">Speed</span>
+                <input type="range" id="speedInput" min="0.5" max="1.5" step="0.05" value="1.0" />
+                <span id="speedValue" class="muted" style="min-width:32px;text-align:right;">1.00</span>
+              </label>
+            </div>
+            <details class="instruct-details">
+              <summary>Свой instruct…</summary>
               <input id="instructInput" type="text" placeholder="напр.: Говори медленно и спокойно" />
-            </label>
-            <label style="width: 100px">
-              <span>Скорость</span>
-              <input id="speedInput" type="number" min="0.5" max="2" step="0.1" value="1.0" />
-            </label>
-          </div>
-
-          <div class="style-presets" id="stylePresets">
-            <span class="muted" style="font-size:12px;">Пресеты:</span>
-            <button class="btn btn-secondary btn-sm preset-btn" data-preset="normal" title="Обычная речь">Обычно</button>
-            <button class="btn btn-secondary btn-sm preset-btn" data-preset="slow_solemn" title="Медленно, торжественно">Медленно • торжественно</button>
-            <button class="btn btn-secondary btn-sm preset-btn" data-preset="slow" title="Медленно, спокойно">Медленно</button>
-            <button class="btn btn-secondary btn-sm preset-btn" data-preset="fast" title="Быстро, энергично">Быстро</button>
-            <button class="btn btn-secondary btn-sm preset-btn" data-preset="cheerful" title="Весело, бодро">Весело</button>
-            <button class="btn btn-secondary btn-sm preset-btn" data-preset="sad" title="Грустно, печально">Грустно</button>
-            <button class="btn btn-secondary btn-sm preset-btn" data-preset="nervous" title="Нервно, тревожно">Нервно</button>
-            <button class="btn btn-secondary btn-sm preset-btn" data-preset="whisper" title="Шёпотом">Шёпот</button>
-            <button class="btn btn-secondary btn-sm preset-btn" data-preset="narrator" title="Аудиокнига, рассказчик">Аудиокнига</button>
+            </details>
           </div>
 
           <!-- Voice strip: refs + profiles + silero + smart, unified -->
@@ -215,6 +220,18 @@
           <div id="resultArea" class="result-empty">
             <p class="muted">Аудио появится здесь после синтеза</p>
           </div>
+
+          <!-- Takes history -->
+          <div id="takesArea" class="takes-area hidden">
+            <div class="strip-label">
+              <span>История takes</span>
+              <button class="btn btn-secondary btn-sm" id="clearTakesBtn" title="Очистить историю">🗑</button>
+            </div>
+            <div id="takesList" class="takes-list">
+              <!-- Populated by addTake() -->
+            </div>
+          </div>
+
           <div id="metricsArea" class="metrics hidden">
             <h3>Метрики</h3>
             <div class="metric-grid">
