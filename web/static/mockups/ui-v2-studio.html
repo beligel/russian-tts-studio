@@ -1,0 +1,752 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RTTS UI v2 — макет (согласование)</title>
+  <style>
+    :root {
+      --bg: #0f1117;
+      --bg-2: #161a23;
+      --bg-3: #1d2230;
+      --bg-4: #252b3b;
+      --border: #2a3142;
+      --text: #e5e7eb;
+      --text-muted: #9ca3af;
+      --primary: #6366f1;
+      --primary-hover: #818cf8;
+      --success: #10b981;
+      --warn: #f59e0b;
+      --danger: #ef4444;
+      --shadow: 0 4px 16px rgba(0,0,0,.35);
+      --radius: 10px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      min-height: 100vh;
+    }
+    .banner {
+      background: linear-gradient(90deg, #312e81, #1e3a5f);
+      border-bottom: 1px solid var(--border);
+      padding: 10px 20px;
+      font-size: 13px;
+      display: flex;
+      gap: 16px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .banner strong { color: #c7d2fe; }
+    .banner .tag {
+      background: rgba(99,102,241,.25);
+      border: 1px solid var(--primary);
+      color: #c7d2fe;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    /* Topbar */
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 20px;
+      background: var(--bg-2);
+      border-bottom: 1px solid var(--border);
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    .brand { display: flex; align-items: center; gap: 10px; }
+    .brand .logo { font-size: 24px; }
+    .brand h1 { font-size: 17px; font-weight: 600; }
+    .brand .ver {
+      font-size: 11px;
+      color: var(--text-muted);
+      background: var(--bg-3);
+      border: 1px solid var(--border);
+      padding: 1px 7px;
+      border-radius: 999px;
+    }
+    .engine-pills {
+      display: flex;
+      background: var(--bg-3);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 3px;
+      gap: 2px;
+    }
+    .engine-pill {
+      border: 0;
+      background: transparent;
+      color: var(--text-muted);
+      padding: 6px 14px;
+      border-radius: 999px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+    }
+    .engine-pill.active {
+      background: var(--primary);
+      color: #fff;
+      box-shadow: 0 0 0 1px rgba(99,102,241,.4);
+    }
+    .engine-pill:disabled { opacity: .4; cursor: not-allowed; }
+    .status { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-muted); }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); box-shadow: 0 0 8px var(--success); }
+
+    /* Nav */
+    .tabs {
+      display: flex;
+      gap: 4px;
+      padding: 8px 20px;
+      background: var(--bg-2);
+      border-bottom: 1px solid var(--border);
+    }
+    .tab {
+      border: 0;
+      background: transparent;
+      color: var(--text-muted);
+      padding: 8px 14px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+    }
+    .tab.active { background: var(--bg-3); color: var(--text); }
+    .tab .badge {
+      background: var(--primary);
+      color: #fff;
+      font-size: 10px;
+      padding: 1px 5px;
+      border-radius: 999px;
+      margin-left: 4px;
+    }
+
+    /* Layout */
+    main { padding: 16px 20px 40px; max-width: 1440px; margin: 0 auto; }
+    .studio-grid {
+      display: grid;
+      grid-template-columns: 1.35fr 1fr;
+      gap: 16px;
+      align-items: start;
+    }
+    @media (max-width: 980px) {
+      .studio-grid { grid-template-columns: 1fr; }
+    }
+    .card {
+      background: var(--bg-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px 16px;
+      box-shadow: var(--shadow);
+    }
+    .card h2 {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      margin-bottom: 10px;
+    }
+    .muted { color: var(--text-muted); }
+    .note {
+      font-size: 11px;
+      color: var(--warn);
+      background: rgba(245,158,11,.08);
+      border: 1px dashed rgba(245,158,11,.35);
+      border-radius: 6px;
+      padding: 6px 8px;
+      margin: 8px 0;
+    }
+
+    /* Toolbar */
+    .toolbar {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-bottom: 8px;
+    }
+    .btn {
+      border: 1px solid var(--border);
+      background: var(--bg-3);
+      color: var(--text);
+      padding: 6px 11px;
+      border-radius: 7px;
+      font-size: 12px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .btn:hover { border-color: #3a4358; background: #232a3b; }
+    .btn-primary {
+      background: var(--primary);
+      border-color: var(--primary);
+      color: #fff;
+      font-weight: 600;
+    }
+    .btn-primary:hover { background: var(--primary-hover); }
+    .btn-large {
+      width: 100%;
+      padding: 12px;
+      font-size: 15px;
+      margin-top: 12px;
+    }
+    .btn-ghost { background: transparent; }
+
+    textarea {
+      width: 100%;
+      min-height: 280px;
+      background: var(--bg-3);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 14px;
+      font-size: 16px;
+      line-height: 1.6;
+      font-family: inherit;
+      resize: vertical;
+    }
+    textarea:focus { outline: none; border-color: var(--primary); }
+    .sel-hint {
+      margin-top: 4px;
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+    .sel-hint mark {
+      background: rgba(99,102,241,.25);
+      color: #c7d2fe;
+      padding: 0 3px;
+      border-radius: 3px;
+    }
+
+    /* Strips */
+    .strip {
+      margin-top: 14px;
+      padding-top: 12px;
+      border-top: 1px solid var(--border);
+    }
+    .strip-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      color: var(--text-muted);
+      margin-bottom: 8px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .chips {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .chip {
+      border: 1px solid var(--border);
+      background: var(--bg-3);
+      color: var(--text);
+      padding: 7px 11px;
+      border-radius: 999px;
+      font-size: 12px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .chip:hover { border-color: #3a4358; }
+    .chip.active {
+      background: rgba(99,102,241,.18);
+      border-color: var(--primary);
+      color: #c7d2fe;
+    }
+    .chip .kind {
+      font-size: 10px;
+      opacity: .7;
+      text-transform: uppercase;
+    }
+    .chip.add {
+      border-style: dashed;
+      color: var(--text-muted);
+    }
+    .avatar {
+      width: 18px; height: 18px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #6366f1, #a78bfa);
+      display: inline-block;
+    }
+    .avatar.g { background: linear-gradient(135deg, #10b981, #34d399); }
+    .avatar.o { background: linear-gradient(135deg, #f59e0b, #fbbf24); }
+    .avatar.p { background: linear-gradient(135deg, #ec4899, #f472b6); }
+
+    .style-row {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .speed {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--text-muted);
+      min-width: 160px;
+    }
+    .speed input[type=range] { flex: 1; accent-color: var(--primary); }
+    details.more {
+      margin-top: 8px;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+    details.more summary { cursor: pointer; user-select: none; }
+    details.more input[type=text] {
+      width: 100%;
+      margin-top: 6px;
+      background: var(--bg-3);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 6px;
+      padding: 8px 10px;
+    }
+
+    /* Output */
+    .player {
+      background: var(--bg-3);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px;
+    }
+    .wave {
+      height: 56px;
+      border-radius: 6px;
+      background:
+        repeating-linear-gradient(90deg,
+          transparent 0 3px,
+          rgba(99,102,241,.35) 3px 5px,
+          transparent 5px 8px),
+        linear-gradient(180deg, transparent 20%, rgba(99,102,241,.15), transparent 80%);
+      margin: 10px 0;
+      position: relative;
+      overflow: hidden;
+    }
+    .wave::after {
+      content: "";
+      position: absolute;
+      left: 38%;
+      top: 0; bottom: 0;
+      width: 2px;
+      background: var(--primary);
+      box-shadow: 0 0 8px var(--primary);
+    }
+    .player-meta {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-bottom: 8px;
+    }
+    .player-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+
+    .takes { margin-top: 14px; }
+    .take {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      gap: 10px;
+      align-items: center;
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg-3);
+      margin-bottom: 6px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .take.active {
+      border-color: var(--primary);
+      background: rgba(99,102,241,.12);
+    }
+    .take .n {
+      font-weight: 700;
+      color: var(--primary);
+      min-width: 28px;
+    }
+    .take .meta { color: var(--text-muted); font-size: 11px; }
+    .take .actions { display: flex; gap: 4px; }
+
+    .qc {
+      margin-top: 12px;
+      font-size: 12px;
+    }
+    .qc-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 6px;
+      margin-top: 6px;
+    }
+    .metric {
+      background: var(--bg-3);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px;
+      text-align: center;
+    }
+    .metric .v { font-size: 15px; font-weight: 600; }
+    .metric .k { font-size: 10px; color: var(--text-muted); text-transform: uppercase; }
+    .metric.good .v { color: var(--success); }
+    .metric.warn .v { color: var(--warn); }
+
+    /* Secondary pages preview */
+    .pages {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 12px;
+      margin-top: 20px;
+    }
+    @media (max-width: 980px) { .pages { grid-template-columns: 1fr; } }
+    .page-card {
+      background: var(--bg-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px;
+      opacity: .92;
+    }
+    .page-card h3 { font-size: 13px; margin-bottom: 8px; }
+    .page-card ul { padding-left: 16px; color: var(--text-muted); font-size: 12px; }
+    .page-card li { margin: 3px 0; }
+    .page-card .mini {
+      margin-top: 8px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+    .page-card .mini span {
+      font-size: 10px;
+      background: var(--bg-3);
+      border: 1px solid var(--border);
+      padding: 3px 7px;
+      border-radius: 999px;
+    }
+
+    .legend {
+      margin-top: 20px;
+      padding: 14px 16px;
+      background: var(--bg-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-size: 13px;
+    }
+    .legend h3 { font-size: 14px; margin-bottom: 8px; }
+    .legend ol { padding-left: 18px; color: var(--text-muted); }
+    .legend li { margin: 4px 0; }
+    .legend code {
+      background: var(--bg-3);
+      padding: 1px 5px;
+      border-radius: 4px;
+      font-size: 12px;
+    }
+    .diff {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-top: 10px;
+    }
+    @media (max-width: 700px) { .diff { grid-template-columns: 1fr; } }
+    .diff .col {
+      background: var(--bg-3);
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 12px;
+    }
+    .diff .col h4 { margin-bottom: 6px; font-size: 12px; }
+    .diff .bad { color: #fca5a5; }
+    .diff .good { color: #6ee7b7; }
+  </style>
+</head>
+<body>
+  <div class="banner">
+    <span class="tag">МАКЕТ · НЕ PRODUCTION</span>
+    <strong>Russian TTS Studio UI v2</strong>
+    <span class="muted">Откройте файл локально в браузере. Это согласование layout — без backend.</span>
+  </div>
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">🎙️</span>
+      <h1>Russian TTS Studio</h1>
+      <span class="ver">v2 mock</span>
+    </div>
+
+    <div class="engine-pills" title="Движок всегда на виду">
+      <button class="engine-pill active" type="button">VoxCPM2</button>
+      <button class="engine-pill" type="button">Higgs Audio</button>
+      <button class="engine-pill" type="button" disabled title="не установлен">Qwen3</button>
+    </div>
+
+    <div class="status">
+      <span class="dot"></span>
+      <span>GPU · ready · 48 kHz</span>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab active" type="button">Студия</button>
+    <button class="tab" type="button">Голоса <span class="badge">new</span></button>
+    <button class="tab" type="button">Проекты</button>
+    <button class="tab" type="button">Инструменты</button>
+  </nav>
+
+  <main>
+    <div class="studio-grid">
+      <!-- LEFT: Editor -->
+      <section class="card">
+        <h2>Редактор</h2>
+
+        <div class="toolbar">
+          <button class="btn" type="button">📄 Файл</button>
+          <button class="btn" type="button">◌́ Ударение</button>
+          <button class="btn" type="button">↻ Переген. выделенное</button>
+          <button class="btn btn-ghost" type="button">{{pause}}</button>
+          <button class="btn btn-ghost" type="button">{{laugh}}</button>
+          <button class="btn btn-ghost" type="button">[SPEAKER]</button>
+        </div>
+
+        <textarea readonly>Глава 1. Утро.
+
+— Привет, как дела?
+— Привет, отлично. А у тебя?
+
+Он говорил медленно и торжественно: «Это только начало».</textarea>
+        <p class="sel-hint">Выделено: <mark>Это только начало</mark> · Ctrl+Shift+R → take #4</p>
+
+        <div class="note">
+          Markup-кнопки — quick-insert. Полный markup (pause/stress/laugh/bgm) остаётся в тексте.
+        </div>
+
+        <!-- Voice strip -->
+        <div class="strip">
+          <div class="strip-label">
+            <span>Голос</span>
+            <span class="muted" style="font-size:11px;text-transform:none;letter-spacing:0;">ref · profile · silero · smart</span>
+          </div>
+          <div class="chips">
+            <button class="chip active" type="button"><span class="avatar"></span> sasha.wav <span class="kind">ref</span></button>
+            <button class="chip" type="button"><span class="avatar g"></span> xenia <span class="kind">silero</span></button>
+            <button class="chip" type="button"><span class="avatar o"></span> male_ru_calm <span class="kind">profile</span></button>
+            <button class="chip" type="button"><span class="avatar p"></span> female_ru_warm <span class="kind">profile</span></button>
+            <button class="chip" type="button">✨ smart voice <span class="kind">higgs</span></button>
+            <button class="chip add" type="button">+ добавить</button>
+          </div>
+        </div>
+
+        <!-- Style strip -->
+        <div class="strip">
+          <div class="strip-label">
+            <span>Стиль</span>
+          </div>
+          <div class="style-row">
+            <div class="chips">
+              <button class="chip" type="button">Обычно</button>
+              <button class="chip active" type="button">Медленно · торжественно</button>
+              <button class="chip" type="button">Быстро</button>
+              <button class="chip" type="button">Весело</button>
+              <button class="chip" type="button">Грустно</button>
+              <button class="chip" type="button">Нервно</button>
+              <button class="chip" type="button">Шёпот</button>
+              <button class="chip" type="button">Аудиокнига</button>
+            </div>
+            <label class="speed">
+              Speed
+              <input type="range" min="0.5" max="1.5" step="0.05" value="0.7" />
+              <span>0.70</span>
+            </label>
+          </div>
+          <details class="more">
+            <summary>Свой instruct…</summary>
+            <input type="text" value="Говори медленно, торжественно, с паузами" readonly />
+          </details>
+        </div>
+
+        <button class="btn btn-primary btn-large" type="button">▶ Синтезировать весь текст</button>
+
+        <details class="more" style="margin-top:10px;">
+          <summary>Ещё: QC · clamp · prosody (VoxCPM) · fallback</summary>
+          <p class="muted" style="margin-top:6px;">
+            Сейчас в production эти галки в Advanced. В v2 — сюда, свернуто.
+            Prosody-панель только при engine=VoxCPM.
+          </p>
+        </details>
+      </section>
+
+      <!-- RIGHT: Output -->
+      <section class="card">
+        <h2>Результат · takes</h2>
+
+        <div class="player">
+          <div class="player-meta">
+            <span><strong style="color:var(--text)">Take #3</strong> · выделенный фрагмент</span>
+            <span>2.4s · RTF 1.1 · pass</span>
+          </div>
+          <div class="wave" title="waveform placeholder"></div>
+          <div class="player-actions">
+            <button class="btn btn-primary" type="button">▶ Play</button>
+            <button class="btn" type="button">⬇ WAV</button>
+            <button class="btn" type="button">📋 В проект</button>
+            <button class="btn btn-ghost" type="button">Сравнить с #2</button>
+          </div>
+        </div>
+
+        <div class="takes">
+          <div class="strip-label"><span>История</span><span class="muted" style="font-size:11px;text-transform:none;">не перезаписываем</span></div>
+          <div class="take">
+            <span class="n">#1</span>
+            <div>
+              <div>Весь текст · sasha.wav · обычно</div>
+              <div class="meta">12.8s · full · 14:02</div>
+            </div>
+            <div class="actions"><button class="btn btn-ghost" type="button">▶</button></div>
+          </div>
+          <div class="take">
+            <span class="n">#2</span>
+            <div>
+              <div>Весь текст · male_ru_calm · торжественно</div>
+              <div class="meta">14.1s · full · 14:05</div>
+            </div>
+            <div class="actions"><button class="btn btn-ghost" type="button">▶</button></div>
+          </div>
+          <div class="take active">
+            <span class="n">#3</span>
+            <div>
+              <div>«Это только начало» · sasha · торжественно</div>
+              <div class="meta">2.4s · selection · 14:07</div>
+            </div>
+            <div class="actions"><button class="btn btn-ghost" type="button">▶</button></div>
+          </div>
+        </div>
+
+        <details class="qc more" open>
+          <summary>QC метрики</summary>
+          <div class="qc-grid">
+            <div class="metric good"><div class="v">4%</div><div class="k">WER</div></div>
+            <div class="metric good"><div class="v">2%</div><div class="k">CER</div></div>
+            <div class="metric warn"><div class="v">0.62</div><div class="k">SIM</div></div>
+            <div class="metric"><div class="v">1.12</div><div class="k">RTF</div></div>
+          </div>
+        </details>
+
+        <div class="note" style="margin-top:12px;">
+          Главное отличие v2: regenerate selection → <strong>новый take</strong>, а не затирание единственного player.
+        </div>
+      </section>
+    </div>
+
+    <!-- Other tabs sketch -->
+    <div class="pages">
+      <div class="page-card">
+        <h3>📚 Голоса</h3>
+        <ul>
+          <li>Аудио-референсы (upload / preview / delete)</li>
+          <li>Voice profiles YAML (CRUD + preview text)</li>
+          <li>Silero speakers</li>
+          <li>Higgs smart-voice hint</li>
+        </ul>
+        <div class="mini">
+          <span>refs</span><span>profiles</span><span>silero</span><span>smart</span>
+        </div>
+      </div>
+      <div class="page-card">
+        <h3>📖 Проекты</h3>
+        <ul>
+          <li>Import .txt/.md/.docx → chapters</li>
+          <li>Segments list + status</li>
+          <li>Batch synth + per-segment regen</li>
+          <li>Export full book WAV</li>
+        </ul>
+        <div class="mini">
+          <span>longform</span><span>chapters</span><span>batch</span>
+        </div>
+      </div>
+      <div class="page-card">
+        <h3>🔧 Инструменты</h3>
+        <ul>
+          <li>ComfyUI (был отдельной вкладкой)</li>
+          <li>Speaker similarity / evaluate</li>
+          <li>Postprocess + podcast mix</li>
+          <li>Subtitles</li>
+        </ul>
+        <div class="mini">
+          <span>comfy</span><span>qc</span><span>mix</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="legend">
+      <h3>Было → Стало</h3>
+      <div class="diff">
+        <div class="col">
+          <h4 class="bad">Сейчас (v1)</h4>
+          <ul>
+            <li class="bad">Движок в Advanced — не находят Higgs</li>
+            <li class="bad">Profiles есть в API, в UI нет</li>
+            <li class="bad">Стиль = 4 разных блока</li>
+            <li class="bad">Один player, regenerate затирает</li>
+            <li class="bad">ComfyUI = отдельная вкладка</li>
+            <li class="bad">Long-form backend без UI</li>
+          </ul>
+        </div>
+        <div class="col">
+          <h4 class="good">Макет v2</h4>
+          <ul>
+            <li class="good">Engine pills в topbar</li>
+            <li class="good">Voice strip: ref + profile + silero + smart</li>
+            <li class="good">Style strip: presets + speed + instruct</li>
+            <li class="good">Takes history, A/B selection</li>
+            <li class="good">ComfyUI → Инструменты</li>
+            <li class="good">Проекты = long-form first-class</li>
+          </ul>
+        </div>
+      </div>
+
+      <h3 style="margin-top:14px;">Вопросы на согласование</h3>
+      <ol>
+        <li>Engine pills в topbar — ок, или оставить только внутри Студии?</li>
+        <li>Voice strip: chips vs dropdown? (макет = chips)</li>
+        <li>Takes: сколько хранить (session-only / disk)?</li>
+        <li>Проекты — делаем сразу после P0, или позже?</li>
+        <li>ComfyUI — сворачиваем в Инструменты или оставляем вкладку?</li>
+      </ol>
+
+      <p class="muted" style="margin-top:12px;">
+        Файл: <code>web/static/mockups/ui-v2-studio.html</code> ·
+        Открыть: <code>xdg-open web/static/mockups/ui-v2-studio.html</code> ·
+        После approve — реализация P0 (pills + voice strip), без полного rewrite.
+      </p>
+    </div>
+  </main>
+
+  <script>
+    // Tiny interactivity for the mock only
+    document.querySelectorAll('.engine-pill:not(:disabled)').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.engine-pill').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+      });
+    });
+    document.querySelectorAll('.strip .chips .chip:not(.add)').forEach(chip => {
+      chip.addEventListener('click', () => {
+        const parent = chip.closest('.chips');
+        parent.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+        chip.classList.add('active');
+      });
+    });
+    document.querySelectorAll('.take').forEach(take => {
+      take.addEventListener('click', () => {
+        document.querySelectorAll('.take').forEach(t => t.classList.remove('active'));
+        take.classList.add('active');
+      });
+    });
+  </script>
+</body>
+</html>
