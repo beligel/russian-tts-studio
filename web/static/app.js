@@ -384,6 +384,11 @@ $('synthBtn').addEventListener('click', async () => {
   form.append('enable_clamp', $('enableClamp') ? $('enableClamp').checked : true);
   form.append('enable_quality_check', $('enableQualityCheck').checked);
   form.append('engine', $('engineSelect') ? $('engineSelect').value : 'voxcpm');
+  // Auto-enable markup when the text contains {{...}} commands so
+  // the pipeline parses and processes them (pause/stress/laugh/etc).
+  // Without this flag the backend passes {{laugh}} as literal text.
+  const hasMarkup = /\{\{.*?\}\}/.test(text);
+  form.append('enable_markup', hasMarkup);
   // Prosody (VoxCPM-only) — always sent, ignored by Silero. Backend
   // already gates on engine=='voxcpm', so we just forward the values.
   form.append('enable_prosody', $('enableProsody') ? $('enableProsody').checked : false);
@@ -1080,6 +1085,11 @@ async function regenerateSelection() {
   form.append('enable_clamp', $('enableClamp') ? $('enableClamp').checked : true);
   form.append('enable_quality_check', $('enableQualityCheck').checked);
   form.append('engine', $('engineSelect') ? $('engineSelect').value : 'voxcpm');
+  // Auto-enable markup when the text contains {{...}} commands so
+  // the pipeline parses and processes them (pause/stress/laugh/etc).
+  // Without this flag the backend passes {{laugh}} as literal text.
+  const hasMarkup = /\{\{.*?\}\}/.test(selected);
+  form.append('enable_markup', hasMarkup);
   form.append('enable_prosody', $('enableProsody') ? $('enableProsody').checked : false);
   for (const f of [
     'pauseMsComma', 'pauseMsSemicolon', 'pauseMsColon', 'pauseMsPeriod',
