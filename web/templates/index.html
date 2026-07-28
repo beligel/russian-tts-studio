@@ -43,11 +43,14 @@
             <button class="btn btn-secondary btn-sm" id="stressBtn" title="Выделите гласную и нажмите — поставит ударение (U+0301)">
               ◌́ Ударение
             </button>
+            <button class="btn btn-secondary btn-sm" id="regenSelBtn" title="Выделите фрагмент текста и нажмите — перегенерирует только его">
+              ↻ Перегенерать выделенное
+            </button>
           </div>
           <textarea
             id="textInput"
             placeholder="Введите текст на русском…"
-            rows="8"
+            rows="16"
           >Привет! Это тестовая фраза на русском языке. Russian TTS Studio3 умеет клонировать голос по короткому референсу.</textarea>
 
           <div class="row">
@@ -59,6 +62,19 @@
               <span>Скорость</span>
               <input id="speedInput" type="number" min="0.5" max="2" step="0.1" value="1.0" />
             </label>
+          </div>
+
+          <div class="style-presets" id="stylePresets">
+            <span class="muted" style="font-size:12px;">Пресеты:</span>
+            <button class="btn btn-secondary btn-sm preset-btn" data-preset="normal" title="Обычная речь">Обычно</button>
+            <button class="btn btn-secondary btn-sm preset-btn" data-preset="slow_solemn" title="Медленно, торжественно">Медленно • торжественно</button>
+            <button class="btn btn-secondary btn-sm preset-btn" data-preset="slow" title="Медленно, спокойно">Медленно</button>
+            <button class="btn btn-secondary btn-sm preset-btn" data-preset="fast" title="Быстро, энергично">Быстро</button>
+            <button class="btn btn-secondary btn-sm preset-btn" data-preset="cheerful" title="Весело, бодро">Весело</button>
+            <button class="btn btn-secondary btn-sm preset-btn" data-preset="sad" title="Грустно, печально">Грустно</button>
+            <button class="btn btn-secondary btn-sm preset-btn" data-preset="nervous" title="Нервно, тревожно">Нервно</button>
+            <button class="btn btn-secondary btn-sm preset-btn" data-preset="whisper" title="Шёпотом">Шёпот</button>
+            <button class="btn btn-secondary btn-sm preset-btn" data-preset="narrator" title="Аудиокнига, рассказчик">Аудиокнига</button>
           </div>
 
           <h3>Референсный голос</h3>

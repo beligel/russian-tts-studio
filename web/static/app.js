@@ -700,13 +700,43 @@ function applyProsodyPreset(name) {
 let lastLoadedEngines = [];
 
 // ---------------------------------------------------------------------------
-// Text toolbar: file upload + stress mark button
+// Text toolbar: file upload + stress mark button + regenerate selection
 // ---------------------------------------------------------------------------
 
 // Combining acute accent (U+0301) — placed AFTER a vowel to mark stress.
 const COMBINING_ACUTE = '\u0301';
 // Russian + Latin vowels (lowercase + uppercase) for stress validation.
 const VOWELS = 'аеёиоуыэюяaeiouyАЕЁИОУЫЭЮЯAEIOUY';
+
+// Style presets — each sets the instruct text + speed value.
+// The instruct strings use Russian (VoxCPM2 understands Russian
+// voice-design hints). For engines without instruct support (Higgs,
+// which uses scene_prompt instead), the speed value still applies.
+const STYLE_PRESETS = {
+  normal:        { instruct: '',                                           speed: 1.0, label: 'Обычно' },
+  slow_solemn:   { instruct: 'Говори медленно, торжественно, с паузами',   speed: 0.7, label: 'Медленно • торжественно' },
+  slow:          { instruct: 'Говори медленно и спокойно',                 speed: 0.8, label: 'Медленно' },
+  fast:          { instruct: 'Говори быстро, энергично, чётко',            speed: 1.3, label: 'Быстро' },
+  cheerful:      { instruct: 'Говори весело, бодро, с радостной интонацией', speed: 1.1, label: 'Весело' },
+  sad:           { instruct: 'Говори грустно, печально, медленно, тихо',   speed: 0.75, label: 'Грустно' },
+  nervous:       { instruct: 'Говори нервно, тревожно, отрывисто',         speed: 1.2, label: 'Нервно' },
+  whisper:       { instruct: 'Говори шёпотом, тихо, интимно',              speed: 0.9, label: 'Шёпот' },
+  narrator:      { instruct: 'Говори как рассказчик аудиокниги, размеренно, выразительно', speed: 0.9, label: 'Аудиокнига' },
+};
+
+function applyStylePreset(presetName) {
+  const p = STYLE_PRESETS[presetName];
+  if (!p) return;
+  const inst = $('instructInput');
+  const spd = $('speedInput');
+  if (inst) inst.value = p.instruct;
+  if (spd) spd.value = p.speed;
+  // Highlight the active preset button
+  document.querySelectorAll('.preset-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.preset === presetName);
+  });
+  showToast(`Стиль: ${p.label}`, 'info', 1500);
+}
 
 async function uploadTextFile(file) {
   // Upload .txt / .md / .docx → /api/import → insert text into textarea.
@@ -775,6 +805,60 @@ function applyStressToSelection() {
   showToast(`Вставлено {{stress "${plainWord}"}}`, 'success');
 }
 
+async function regenerateSelection() {
+  // Take the selected text in the textarea and synthesize ONLY that
+  // fragment (with the current reference, style, and engine settings).
+  // The full-text synthesis button stays untouched — this is a quick
+  // re-render of a portion for A/B comparison.
+  const ta = $('textInput');
+  if (!ta) return;
+  const start = ta.selectionStart;
+  const end = ta.selectionEnd;
+  const selected = ta.value.substring(start, end).trim();
+
+  if (!selected) {
+    showToast('Выделите фрагмент текста для перегенерации', 'error');
+    return;
+  }
+
+  // Build the form — same as the main synthesize button, but with
+  // only the selected text.
+  const refPath = $('refSelect').value;
+  const form = new FormData();
+  form.append('text', selected);
+  if (refPath) form.append('reference_path', refPath);
+  form.append('instruct', $('instructInput').value || '');
+  form.append('speaker_fallback', $('speakerFallback').value);
+  form.append('speed', $('speedInput').value || '1.0');
+  form.append('enable_fallback', $('enableFallback').checked);
+  form.append('enable_postprocess', $('enablePostprocess').checked);
+  form.append('enable_clamp', $('enableClamp') ? $('enableClamp').checked : true);
+  form.append('enable_quality_check', $('enableQualityCheck').checked);
+  form.append('engine', $('engineSelect') ? $('engineSelect').value : 'voxcpm');
+  form.append('enable_prosody', $('enableProsody') ? $('enableProsody').checked : false);
+  for (const f of [
+    'pauseMsComma', 'pauseMsSemicolon', 'pauseMsColon', 'pauseMsPeriod',
+    'pauseMsExclamation', 'pauseMsQuestion', 'pauseMsEllipsis',
+    'pauseMsWordGap',
+  ]) {
+    const el = $(f);
+    if (el) form.append(
+      f.replace(/^pauseMs/, 'pause_ms_').replace(/[A-Z]/g, c => c.toLowerCase()),
+      el.value || '0',
+    );
+  }
+
+  showLoader(`Перегенерирую выделенный фрагмент (${selected.length} симв.)…`);
+  try {
+    const result = await synthesizeWithRetry(form);
+    renderResult(result);
+  } catch (e) {
+    showToast(`Ошибка перегенерации: ${e.message}`, 'error');
+  } finally {
+    hideLoader();
+  }
+}
+
 // Wire up the toolbar buttons on DOMContentLoaded.
 document.addEventListener('DOMContentLoaded', () => {
   // File upload → textarea
@@ -794,6 +878,17 @@ document.addEventListener('DOMContentLoaded', () => {
     stressBtn.addEventListener('click', applyStressToSelection);
   }
 
+  // Regenerate selection button
+  const regenBtn = $('regenSelBtn');
+  if (regenBtn) {
+    regenBtn.addEventListener('click', regenerateSelection);
+  }
+
+  // Style preset buttons
+  document.querySelectorAll('.preset-btn').forEach(btn => {
+    btn.addEventListener('click', () => applyStylePreset(btn.dataset.preset));
+  });
+
   // Keyboard shortcut: Ctrl+Shift+A (A for Accent) on the textarea.
   const ta = $('textInput');
   if (ta) {
@@ -801,6 +896,11 @@ document.addEventListener('DOMContentLoaded', () => {
       if (e.ctrlKey && e.shiftKey && (e.key === 'A' || e.key === 'a' || e.key === 'F')) {
         e.preventDefault();
         applyStressToSelection();
+      }
+      // Ctrl+Shift+R — regenerate selection
+      if (e.ctrlKey && e.shiftKey && (e.key === 'R' || e.key === 'r')) {
+        e.preventDefault();
+        regenerateSelection();
       }
     });
   }

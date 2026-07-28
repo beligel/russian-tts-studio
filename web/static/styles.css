@@ -138,6 +138,16 @@ input[type="text"], input[type="number"], select, textarea {
 }
 textarea { width: 100%; resize: vertical; }
 
+/* Main synthesis textarea — larger and more readable than the default
+   13px inputs. 16px font + 16 rows makes long-form text comfortable
+   to edit and select. */
+#textInput {
+  font-size: 16px;
+  line-height: 1.6;
+  padding: 12px 14px;
+  min-height: 320px;
+}
+
 .row {
   display: flex;
   gap: 12px;
@@ -181,6 +191,21 @@ textarea { width: 100%; resize: vertical; }
   flex-wrap: wrap;
 }
 .text-toolbar .btn-sm { white-space: nowrap; }
+
+/* Style preset buttons — wrap on small screens */
+.style-presets {
+  display: flex;
+  gap: 6px;
+  margin: 10px 0;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.style-presets .preset-btn { white-space: nowrap; }
+.style-presets .preset-btn.active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: white;
+}
 
 /* Voice engine toggle — large, always-visible button group */
 .engine-switch {
