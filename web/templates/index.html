@@ -29,7 +29,6 @@
     <button class="tab active" data-tab="synth">🎤 Студия</button>
     <button class="tab" data-tab="refs">📚 Голоса</button>
     <button class="tab" data-tab="projects">📖 Проекты</button>
-    <button class="tab" data-tab="comfyui">🔌 ComfyUI</button>
     <button class="tab" data-tab="tools">🔧 Инструменты</button>
   </nav>
 
@@ -381,57 +380,57 @@
       </div>
     </section>
 
-    <!-- TAB: COMFYUI -->
-    <section class="tab-pane" id="tab-comfyui">
-      <div class="card">
-        <h2>ComfyUI интеграция</h2>
-        <div id="comfyuiStatus" class="comfyui-status">Проверка…</div>
-        <div class="row" id="comfyuiActions">
-          <button class="btn" id="comfyuiInstall">📥 Установить плагин</button>
-          <button class="btn" id="comfyuiRefresh">↻ Обновить</button>
-        </div>
-      </div>
-      <div class="card">
-        <h3>Сохранённые спикеры ComfyUI</h3>
-        <div id="comfyuiSpeakers" class="reference-list">
-          <p class="muted">Загрузка…</p>
-        </div>
-      </div>
-      <div class="card">
-        <h3>Синтез через ComfyUI-спикера</h3>
-        <div class="row">
-          <label class="grow">
-            <span>Спикер</span>
-            <select id="comfyuiSpeakerSelect"></select>
-          </label>
-        </div>
-        <textarea
-          id="comfyuiText"
-          placeholder="Текст для синтеза…"
-          rows="3"
-        >Привет, это тест ComfyUI-интеграции.</textarea>
-        <button class="btn btn-primary" id="comfyuiSynthBtn">▶ Синтезировать</button>
-        <div id="comfyuiResult" class="result-empty">
-          <p class="muted">Результат появится здесь</p>
-        </div>
-      </div>
-      <div class="card">
-        <h3>Экспорт нового спикера</h3>
-        <p class="muted">Сохраните аудио в формате, совместимом с плагином ComfyUI.</p>
-        <div class="row">
-          <input type="file" id="comfyuiExportFile" accept="audio/*" />
-          <input type="text" id="comfyuiExportName" placeholder="Имя спикера" />
-        </div>
-        <label>
-          <input type="checkbox" id="comfyuiAutoTranscribe" checked />
-          Авто-транскрипция (Whisper)
-        </label>
-        <button class="btn" id="comfyuiExportBtn">💾 Сохранить пресет</button>
-      </div>
-    </section>
-
-    <!-- TAB: TOOLS -->
+    <!-- TAB: ИНСТРУМЕНТЫ (includes ComfyUI, was separate tab) -->
     <section class="tab-pane" id="tab-tools">
+      <!-- ComfyUI integration (collapsed) -->
+      <details class="advanced" style="margin-bottom:16px;">
+        <summary>🔌 ComfyUI интеграция</summary>
+        <div class="card" style="margin-top:8px;">
+          <div id="comfyuiStatus" class="comfyui-status">Проверка…</div>
+          <div class="row" id="comfyuiActions">
+            <button class="btn" id="comfyuiInstall">📥 Установить плагин</button>
+            <button class="btn" id="comfyuiRefresh">↻ Обновить</button>
+          </div>
+        </div>
+        <div class="card" style="margin-top:8px;">
+          <h3>Сохранённые спикеры ComfyUI</h3>
+          <div id="comfyuiSpeakers" class="reference-list">
+            <p class="muted">Загрузка…</p>
+          </div>
+        </div>
+        <div class="card" style="margin-top:8px;">
+          <h3>Синтез через ComfyUI-спикера</h3>
+          <div class="row">
+            <label class="grow">
+              <span>Спикер</span>
+              <select id="comfyuiSpeakerSelect"></select>
+            </label>
+          </div>
+          <textarea
+            id="comfyuiText"
+            placeholder="Текст для синтеза…"
+            rows="3"
+          >Привет, это тест ComfyUI-интеграции.</textarea>
+          <button class="btn btn-primary" id="comfyuiSynthBtn">▶ Синтезировать</button>
+          <div id="comfyuiResult" class="result-empty">
+            <p class="muted">Результат появится здесь</p>
+          </div>
+        </div>
+        <div class="card" style="margin-top:8px;">
+          <h3>Экспорт нового спикера</h3>
+          <p class="muted">Сохраните аудио в формате, совместимом с плагином ComfyUI.</p>
+          <div class="row">
+            <input type="file" id="comfyuiExportFile" accept="audio/*" />
+            <input type="text" id="comfyuiExportName" placeholder="Имя спикера" />
+          </div>
+          <label>
+            <input type="checkbox" id="comfyuiAutoTranscribe" checked />
+            Авто-транскрипция (Whisper)
+          </label>
+          <button class="btn" id="comfyuiExportBtn">💾 Сохранить пресет</button>
+        </div>
+      </details>
+
       <div class="grid-2">
         <div class="card">
           <h2>Сравнить сходство спикеров</h2>

@@ -631,8 +631,11 @@ function useComfySpeaker(name) {
   $('comfyuiSpeakerSelect').value = name;
   $all('.tab').forEach(t => t.classList.remove('active'));
   $all('.tab-pane').forEach(p => p.classList.remove('active'));
-  document.querySelector('[data-tab="comfyui"]').classList.add('active');
-  $('tab-comfyui').classList.add('active');
+  document.querySelector('[data-tab="tools"]').classList.add('active');
+  $('tab-tools').classList.add('active');
+  // Open the ComfyUI details if collapsed
+  const comfyDetails = document.querySelector('#tab-tools > details');
+  if (comfyDetails) comfyDetails.open = true;
   showToast(`Спикер: ${name}`, 'success');
 }
 
