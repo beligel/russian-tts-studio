@@ -228,7 +228,7 @@ class TTSPipeline:
         final_path = result.audio_path
         prosody_applied = bool((result.metadata or {}).get("prosody_applied"))
         if self.config.enable_postprocess:
-            final_path = self._postprocess(final_path, prosody_applied=prosody_applied)
+            final_path = self._postprocess(final_path, prosody_applied=prosody_applied, speed=speed)
 
         return {
             "result": result,
@@ -318,8 +318,14 @@ class TTSPipeline:
             logger.exception("Quality check failed: %s", e)
             return QualityCheckOutcome.PASS, metrics
 
-    def _postprocess(self, audio_path: Path, prosody_applied: bool = False) -> Path:
-        """Apply post-processing: trim silence, clamp long pauses, normalize."""
+    def _postprocess(self, audio_path: Path, prosody_applied: bool = False, speed: float = 1.0) -> Path:
+        """Apply post-processing: trim silence, clamp long pauses, normalize.
+
+        ``speed`` applies a time-stretch (speed up / slow down) via
+        torchaudio resampling. VoxCPM2 has no native speed control, so
+        we apply it here. ``speed=1.0`` = no change. Values < 1.0 slow
+        down, > 1.0 speed up. Only applied when post-processing is on.
+        """
         from ..utils.audio_utils import (
             clamp_long_silences, load_audio, normalize_loudness, trim_silence,
             get_duration,
@@ -356,6 +362,31 @@ class TTSPipeline:
                 )
 
         processed = normalize_loudness(processed, target_dbfs=self.config.target_dbfs)
+
+        # Apply speed (time-stretch) via simple resampling. VoxCPM2 has
+        # no native speed control, so we do it in post-processing.
+        # speed=1.0 = no change. <1.0 = slower (more samples), >1.0 =
+        # faster (fewer samples). Pitch shifts slightly — acceptable
+        # for the 0.7–1.3 range. For pitch-preserving stretch, use
+        # PhaseVocoder (future improvement).
+        if abs(speed - 1.0) > 0.01:
+            import torchaudio as _ta
+            # Stretch: target_sr = sr * speed. Resample to that rate,
+            # then save at the original sr → duration changes by 1/speed.
+            target_sr = int(sr * speed)
+            t = processed.unsqueeze(0) if processed.dim() == 1 else processed
+            t = _ta.functional.resample(t, sr, target_sr)
+            # t now has fewer samples (faster) or more (slower).
+            # Write at the original sr so the player interprets it
+            # as faster/slower playback.
+            processed = t.squeeze(0) if t.dim() > 1 else t
+            logger.info(
+                "Speed %.2f applied: %.2fs → %.2fs (pitch-shift %.0f Hz → %.0f Hz)",
+                speed,
+                len(processed) / target_sr,
+                len(processed) / sr,
+                sr, target_sr,
+            )
 
         out_path = audio_path.with_name(audio_path.stem + "_processed.wav")
         torchaudio.save(str(out_path), processed.unsqueeze(0), sr)

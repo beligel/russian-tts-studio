@@ -369,3 +369,18 @@ class VoxCPMSynthesizer:
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
             logger.info("VoxCPM2 unloaded")
+
+    @staticmethod
+    def supports_sound_events() -> bool:
+        """VoxCPM2 does NOT understand ``[laugh]``/``[music]`` tokens."""
+        return False
+
+    @staticmethod
+    def supports_stress_marks() -> bool:
+        """VoxCPM2 does NOT explicitly honour U+0301 stress marks, but
+        we keep them in the text — the model's tokeniser tolerates
+        combining diacritics, and stripping them was worse (changed
+        characters the tokeniser sees). So we return True here to tell
+        the pipeline NOT to strip U+0301.
+        """
+        return True

@@ -85,14 +85,16 @@ class TestHiggsCapabilities:
 
         assert HiggsAudioSynthesizer.supports_stress_marks() is True
 
-    def test_voxcpm_does_not_advertise_support(self):
-        """VoxCPM2 has no ``supports_*`` methods → pipeline defaults to
-        stripping. This is the contract: absent capability flags = strip."""
+    def test_voxcpm_sound_events_false_stress_true(self):
+        """VoxCPM2 does NOT support sound events (strips [laugh] etc.)
+        but DOES keep stress marks (U+0301) — the tokeniser tolerates
+        combining diacritics, and stripping them was worse."""
         from russian_tts_studio.models.voxcpm_synth import VoxCPMSynthesizer
 
-        # VoxCPM2 doesn't define these methods — getattr default returns False.
+        # Sound events: not supported → pipeline strips [laugh]/[music]
         assert not getattr(VoxCPMSynthesizer, "supports_sound_events", lambda: False)()
-        assert not getattr(VoxCPMSynthesizer, "supports_stress_marks", lambda: False)()
+        # Stress marks: kept (True) — pipeline does NOT strip U+0301
+        assert getattr(VoxCPMSynthesizer, "supports_stress_marks", lambda: False)() is True
 
 
 class TestHiggsReferenceParsing:
