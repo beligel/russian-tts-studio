@@ -49,6 +49,26 @@
             <button class="btn btn-secondary btn-sm" id="regenSelBtn" title="Выделите фрагмент текста и нажмите — перегенерирует только его">
               ↻ Перегенерать выделенное
             </button>
+            <span class="toolbar-sep"></span>
+            <!-- Markup quick-insert buttons -->
+            <button class="btn btn-secondary btn-sm markup-insert" data-insert="{{pause 700ms}}" title="Вставить паузу 700мс">⏸ Пауза</button>
+            <button class="btn btn-secondary btn-sm markup-insert" data-insert="{{laugh}}" title="Вставить смех">😄 Смех</button>
+            <button class="btn btn-secondary btn-sm markup-insert" data-insert="{{sigh}}" title="Вставить вздох">😮‍💨 Вздох</button>
+            <button class="btn btn-secondary btn-sm markup-insert" data-insert="{{cough}}" title="Вставить кашель">🤧 Кашель</button>
+            <button class="btn btn-secondary btn-sm markup-insert" data-insert="{{bgm start}}\n\n{{bgm end}}" title="Вставить фоновую музыку">🎵 Музыка</button>
+            <button class="btn btn-secondary btn-sm markup-insert" data-insert="[SPEAKER0] " title="Вставить тег спикера для диалогов">🗣 SPEAKER</button>
+            <details class="markup-more" style="display:inline-block;">
+              <summary class="btn btn-secondary btn-sm" title="Ещё markup">⋯</summary>
+              <div class="markup-menu">
+                <button class="btn btn-secondary btn-sm markup-insert" data-insert="{{chapter &quot;Новая глава&quot;}}">📖 Глава</button>
+                <button class="btn btn-secondary btn-sm markup-insert" data-insert="{{alias &quot;АББР&quot; &quot;расшифровка&quot;}}">🔤 Alias</button>
+                <button class="btn btn-secondary btn-sm markup-insert" data-insert="{{speed 0.9}}">🐢 Speed</button>
+                <button class="btn btn-secondary btn-sm markup-insert" data-insert="{{volume -3db}}">🔉 Volume</button>
+                <button class="btn btn-secondary btn-sm markup-insert" data-insert="{{reset}}">↺ Reset</button>
+                <button class="btn btn-secondary btn-sm markup-insert" data-insert="{{applause}}">👏 Аплодисменты</button>
+                <button class="btn btn-secondary btn-sm markup-insert" data-insert="{{hum start}}\n\n{{hum end}}">🎶 Напевание</button>
+              </div>
+            </details>
           </div>
           <textarea
             id="textInput"

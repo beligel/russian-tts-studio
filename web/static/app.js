@@ -1419,6 +1419,34 @@ document.addEventListener('DOMContentLoaded', () => {
     btn.addEventListener('click', () => applyStylePreset(btn.dataset.preset));
   });
 
+  // Markup quick-insert buttons — insert at cursor position
+  document.querySelectorAll('.markup-insert').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const ta = $('textInput');
+      if (!ta) return;
+      const insert = btn.dataset.insert || '';
+      if (!insert) return;
+      const start = ta.selectionStart;
+      const end = ta.selectionEnd;
+      // Replace selection (or insert at cursor) with the markup text
+      const before = ta.value.substring(0, start);
+      const after = ta.value.substring(end);
+      // Add space before if needed (not at start of line)
+      const prefix = (before && !before.endsWith(' ') && !before.endsWith('\n')) ? ' ' : '';
+      const suffix = (after && !after.startsWith(' ') && !after.startsWith('\n')) ? ' ' : '';
+      const insertion = prefix + insert + suffix;
+      ta.value = before + insertion + after;
+      // Place cursor after the inserted text
+      const newPos = start + insertion.length;
+      ta.selectionStart = newPos;
+      ta.selectionEnd = newPos;
+      ta.focus();
+      // Close the dropdown menu if open
+      const details = btn.closest('details');
+      if (details) details.open = false;
+    });
+  });
+
   // Speed slider — update display value on change
   const spd = $('speedInput');
   const spdVal = $('speedValue');
