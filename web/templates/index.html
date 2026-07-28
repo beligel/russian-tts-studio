@@ -26,8 +26,9 @@
   </header>
 
   <nav class="tabs">
-    <button class="tab active" data-tab="synth">🎤 Синтез</button>
-    <button class="tab" data-tab="refs">📚 Референсы</button>
+    <button class="tab active" data-tab="synth">🎤 Студия</button>
+    <button class="tab" data-tab="refs">📚 Голоса</button>
+    <button class="tab" data-tab="projects">📖 Проекты</button>
     <button class="tab" data-tab="comfyui">🔌 ComfyUI</button>
     <button class="tab" data-tab="tools">🔧 Инструменты</button>
   </nav>
@@ -277,17 +278,105 @@
       </div>
     </section>
 
-    <!-- TAB: REFERENCES -->
+    <!-- TAB: ГОЛОСА (refs + profiles + silero) -->
     <section class="tab-pane" id="tab-refs">
-      <div class="card">
-        <h2>Управление референсными голосами</h2>
-        <p class="muted">Загрузите 3–10 секунд чистой русской речи для клонирования.</p>
-        <div class="upload-zone" id="dropZone">
-          <p>📁 Перетащите аудио сюда или нажмите для выбора</p>
-          <input type="file" id="refDropInput" accept="audio/*" hidden />
+      <div class="grid-2">
+        <!-- Audio references -->
+        <div class="card">
+          <h2>Аудио-референсы</h2>
+          <p class="muted">Загрузите 3–10 секунд чистой речи для клонирования голоса.</p>
+          <div class="upload-zone" id="dropZone">
+            <p>📁 Перетащите аудио сюда или нажмите для выбора</p>
+            <input type="file" id="refDropInput" accept="audio/*" hidden />
+          </div>
+          <div class="reference-list" id="refList">
+            <p class="muted">Загрузка…</p>
+          </div>
         </div>
-        <div class="reference-list" id="refList">
+
+        <!-- Voice profiles (YAML) -->
+        <div class="card">
+          <h2>Voice profiles (текстовые описания)</h2>
+          <p class="muted">Опишите голос текстом — движок Higgs рендерит описание напрямую, без аудио-референса.</p>
+          <div id="profileList" class="profile-list">
+            <p class="muted">Загрузка…</p>
+          </div>
+          <details class="advanced" style="margin-top:12px;">
+            <summary>+ Добавить профиль</summary>
+            <label>
+              <span>Имя (латиницей, без пробелов)</span>
+              <input id="newProfileName" type="text" placeholder="напр.: male_ru_deep" />
+            </label>
+            <label>
+              <span>Описание голоса</span>
+              <textarea id="newProfileDesc" rows="3" placeholder="Мужской голос, глубокий тембр, спокойная интонация."></textarea>
+            </label>
+            <button class="btn btn-primary btn-sm" id="addProfileBtn" style="margin-top:8px;">💾 Сохранить</button>
+          </details>
+        </div>
+      </div>
+
+      <!-- Silero speakers -->
+      <div class="card" style="margin-top:16px;">
+        <h2>Silero speakers (fallback)</h2>
+        <p class="muted">Встроенные голоса Silero — используются когда нет референса или клонирование не удалось.</p>
+        <div class="silero-speakers" id="sileroSpeakers">
+          <span class="chip">xenia (жен)</span>
+          <span class="chip">aidar (муж)</span>
+          <span class="chip">baya (жен)</span>
+          <span class="chip">kseniya (жен)</span>
+          <span class="chip">eugene (муж)</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB: ПРОЕКТЫ (long-form) -->
+    <section class="tab-pane" id="tab-projects">
+      <div class="card">
+        <h2>Проекты</h2>
+        <p class="muted">Импортируйте длинный текст — RTTS разобьёт его на главы и сегменты для осознанного синтеза аудиокниг и курсов.</p>
+
+        <!-- Create project -->
+        <details class="advanced" open>
+          <summary>+ Новый проект</summary>
+          <label>
+            <span>Название</span>
+            <input id="projName" type="text" placeholder="напр.: Урок 1 — Фонетика" />
+          </label>
+          <label>
+            <span>Исходный текст</span>
+            <textarea id="projSource" rows="8" placeholder="Вставьте текст или загрузите файл через кнопку в Студии…"></textarea>
+          </label>
+          <div class="row" style="margin-top:8px;">
+            <label style="width:120px;">
+              <span>Max chars</span>
+              <input id="projMaxChars" type="number" value="200" min="50" max="500" />
+            </label>
+            <label style="width:120px;">
+              <span>Max sentences</span>
+              <input id="projMaxSentences" type="number" value="4" min="1" max="10" />
+            </label>
+            <button class="btn btn-primary" id="createProjBtn" style="align-self:flex-end;">📋 Создать проект</button>
+          </div>
+        </details>
+
+        <div id="projectsList" style="margin-top:16px;">
           <p class="muted">Загрузка…</p>
+        </div>
+      </div>
+
+      <!-- Project detail (hidden until a project is selected) -->
+      <div class="card" id="projectDetailCard" style="margin-top:16px; display:none;">
+        <div class="row" style="justify-content:space-between;align-items:center;">
+          <h2 id="projectDetailTitle">—</h2>
+          <div>
+            <button class="btn btn-primary btn-sm" id="synthAllBtn">▶ Синтезировать все</button>
+            <button class="btn btn-sm" id="rebuildBtn">🔧 Собрать WAV</button>
+            <button class="btn btn-sm" id="deleteProjBtn" style="color:var(--danger);">🗑 Удалить</button>
+          </div>
+        </div>
+        <div id="projectChapters" class="project-chapters">
+          <!-- Populated by loadProjectDetail() -->
         </div>
       </div>
     </section>

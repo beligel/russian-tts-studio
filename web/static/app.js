@@ -1101,6 +1101,291 @@ async function regenerateSelection() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Голоса tab: voice profiles CRUD + display
+// ---------------------------------------------------------------------------
+
+async function loadProfilesList() {
+  const container = $('profileList');
+  if (!container) return;
+  try {
+    const resp = await fetch('/api/voice-profiles');
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const data = await resp.json();
+    const profiles = data.profiles || [];
+    if (!profiles.length) {
+      container.innerHTML = '<p class="muted">Нет профилей. Добавьте описание голоса ниже.</p>';
+      return;
+    }
+    container.innerHTML = profiles.map(p => `
+      <div class="profile-card">
+        <div>
+          <div class="name">${p.name}</div>
+          <div class="desc">${p.description}</div>
+        </div>
+        <div class="actions">
+          <button title="Использовать" data-name="${p.name}" data-action="use">🎤</button>
+          <button title="Удалить" data-name="${p.name}" data-action="delete">🗑</button>
+        </div>
+      </div>
+    `).join('');
+    // Wire up action buttons
+    container.querySelectorAll('[data-action]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const name = btn.dataset.name;
+        const action = btn.dataset.action;
+        if (action === 'use') {
+          // Switch to Studio tab and select the profile chip
+          $all('.tab').forEach(t => t.classList.remove('active'));
+          $all('.tab-pane').forEach(p => p.classList.remove('active'));
+          document.querySelector('[data-tab="synth"]').classList.add('active');
+          $('tab-synth').classList.add('active');
+          // Find the profile chip and activate it
+          const chip = document.querySelector(`.voice-chip[data-voice-value="profile:${name}"]`);
+          if (chip) chip.click();
+          showToast(`Профиль ${name} выбран`, 'success');
+        } else if (action === 'delete') {
+          if (!confirm(`Удалить профиль ${name}?`)) return;
+          try {
+            await fetch(`/api/voice-profiles/${name}`, { method: 'DELETE' });
+            showToast('Профиль удалён', 'success');
+            loadProfilesList();
+            loadVoiceStrip();
+          } catch (e) {
+            showToast(`Ошибка: ${e.message}`, 'error');
+          }
+        }
+      });
+    });
+  } catch (e) {
+    container.innerHTML = '<p class="muted">Недоступно (нужен /api/voice-profiles)</p>';
+  }
+}
+
+async function addProfileFromForm() {
+  const name = $('newProfileName').value.trim();
+  const desc = $('newProfileDesc').value.trim();
+  if (!name || !desc) {
+    showToast('Заполните имя и описание', 'error');
+    return;
+  }
+  try {
+    const resp = await fetch('/api/voice-profiles', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `name=${encodeURIComponent(name)}&description=${encodeURIComponent(desc)}`,
+    });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    showToast(`Профиль "${name}" сохранён`, 'success');
+    $('newProfileName').value = '';
+    $('newProfileDesc').value = '';
+    loadProfilesList();
+    loadVoiceStrip();
+  } catch (e) {
+    showToast(`Ошибка: ${e.message}`, 'error');
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Проекты tab: long-form project management
+// ---------------------------------------------------------------------------
+
+let currentProjectId = null;
+
+async function loadProjectsList() {
+  const container = $('projectsList');
+  if (!container) return;
+  try {
+    const resp = await fetch('/api/projects');
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const data = await resp.json();
+    const projects = data.projects || [];
+    if (!projects.length) {
+      container.innerHTML = '<p class="muted">Нет проектов. Создайте новый выше.</p>';
+      return;
+    }
+    container.innerHTML = projects.map(p => `
+      <div class="take" style="cursor:pointer;" data-proj-id="${p.id}">
+        <span class="take-num">📖</span>
+        <div class="take-info">
+          <div>${p.name}</div>
+          <div class="take-meta">${p.segment_count || 0} сегм. · ${p.chapter_count || 0} глав · ${p.char_count || 0} симв.</div>
+        </div>
+        <div class="take-actions"><button>открыть →</button></div>
+      </div>
+    `).join('');
+    container.querySelectorAll('[data-proj-id]').forEach(el => {
+      el.addEventListener('click', () => loadProjectDetail(el.dataset.projId));
+    });
+  } catch (e) {
+    container.innerHTML = `<p class="muted">Ошибка: ${e.message}</p>`;
+  }
+}
+
+async function createProject() {
+  const name = $('projName').value.trim();
+  const source = $('projSource').value.trim();
+  if (!name || !source) {
+    showToast('Заполните название и текст', 'error');
+    return;
+  }
+  const maxChars = $('projMaxChars') ? $('projMaxChars').value : 200;
+  const maxSentences = $('projMaxSentences') ? $('projMaxSentences').value : 4;
+  showLoader('Создаю проект…');
+  try {
+    const resp = await fetch('/api/projects', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `name=${encodeURIComponent(name)}&source_text=${encodeURIComponent(source)}&max_chars=${maxChars}&max_sentences=${maxSentences}`,
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.detail || 'HTTP ' + resp.status);
+    }
+    const project = await resp.json();
+    showToast(`Проект "${name}" создан: ${project.segments ? project.segments.length : 0} сегм.`, 'success');
+    loadProjectsList();
+    loadProjectDetail(project.id);
+  } catch (e) {
+    showToast(`Ошибка: ${e.message}`, 'error');
+  } finally {
+    hideLoader();
+  }
+}
+
+async function loadProjectDetail(projectId) {
+  currentProjectId = projectId;
+  const card = $('projectDetailCard');
+  if (!card) return;
+  try {
+    const resp = await fetch(`/api/projects/${projectId}`);
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const project = await resp.json();
+    $('projectDetailTitle').textContent = project.name || projectId;
+    card.style.display = '';
+
+    // Render chapters + segments
+    const chaptersEl = $('projectChapters');
+    const segments = project.segments || [];
+    const chapters = project.chapters || [];
+    if (!segments.length) {
+      chaptersEl.innerHTML = '<p class="project-empty">Нет сегментов</p>';
+      return;
+    }
+    // Group segments by chapter_title
+    const byChapter = {};
+    for (const seg of segments) {
+      const ch = seg.chapter_title || '(без главы)';
+      if (!byChapter[ch]) byChapter[ch] = [];
+      byChapter[ch].push(seg);
+    }
+    chaptersEl.innerHTML = '';
+    for (const [chTitle, segs] of Object.entries(byChapter)) {
+      const chDiv = document.createElement('div');
+      chDiv.className = 'project-chapter';
+      chDiv.innerHTML = `<h3>${chTitle}</h3>`;
+      for (const seg of segs) {
+        const segDiv = document.createElement('div');
+        segDiv.className = `project-segment ${seg.status || 'pending'}`;
+        const dur = seg.duration_sec ? seg.duration_sec.toFixed(1) + 's' : '—';
+        const statusLabel = seg.status === 'approved' ? '✅' : seg.status === 'error' ? '❌' : '⏳';
+        const preview = (seg.text || '').substring(0, 60) + ((seg.text || '').length > 60 ? '…' : '');
+        segDiv.innerHTML = `
+          <span class="seg-idx">${seg.idx}</span>
+          <div>
+            <div class="seg-text">${preview}</div>
+            <div class="seg-meta">${statusLabel} ${seg.status || 'pending'} · ${dur}${seg.rtf ? ' · RTF ' + seg.rtf.toFixed(2) : ''}</div>
+          </div>
+          <div class="seg-actions">
+            <button title="Перегенерировать" data-seg-id="${seg.id}" data-action="regen">↻</button>
+            <button title="Одобрить" data-seg-id="${seg.id}" data-action="approve">✅</button>
+            <button title="Отклонить" data-seg-id="${seg.id}" data-action="discard">❌</button>
+          </div>
+        `;
+        chDiv.appendChild(segDiv);
+      }
+      chaptersEl.appendChild(chDiv);
+    }
+    // Wire up segment action buttons
+    chaptersEl.querySelectorAll('[data-action]').forEach(btn => {
+      btn.addEventListener('click', () => handleSegmentAction(btn.dataset.segId, btn.dataset.action));
+    });
+  } catch (e) {
+    showToast(`Ошибка загрузки проекта: ${e.message}`, 'error');
+  }
+}
+
+async function handleSegmentAction(segmentId, action) {
+  if (!currentProjectId) return;
+  if (action === 'regen') {
+    showLoader('Перегенерирую сегмент…');
+    try {
+      const refPath = $('refSelect') ? $('refSelect').value : '';
+      const body = new URLSearchParams();
+      body.append('speed', $('speedInput') ? $('speedInput').value : '0.9');
+      if ($('instructInput') && $('instructInput').value) body.append('instruct', $('instructInput').value);
+      if (refPath) body.append('reference_path', refPath);
+      const resp = await fetch(`/api/projects/${currentProjectId}/segments/${segmentId}/regenerate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: body.toString(),
+      });
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      showToast('Сегмент перегенерирован', 'success');
+      loadProjectDetail(currentProjectId);
+    } catch (e) {
+      showToast(`Ошибка: ${e.message}`, 'error');
+    } finally {
+      hideLoader();
+    }
+  } else if (action === 'approve') {
+    try {
+      await fetch(`/api/projects/${currentProjectId}/segments/${segmentId}/approve`, { method: 'POST' });
+      showToast('Одобрено', 'success');
+      loadProjectDetail(currentProjectId);
+    } catch (e) { showToast(`Ошибка: ${e.message}`, 'error'); }
+  } else if (action === 'discard') {
+    try {
+      await fetch(`/api/projects/${currentProjectId}/segments/${segmentId}/discard`, { method: 'POST' });
+      showToast('Отклонено', 'info');
+      loadProjectDetail(currentProjectId);
+    } catch (e) { showToast(`Ошибка: ${e.message}`, 'error'); }
+  }
+}
+
+async function synthAllSegments() {
+  if (!currentProjectId) return;
+  showToast('Синтез всех сегментов — используйте API напрямую', 'info');
+  // The backend has /api/projects/{id}/synthesize-all but it's a long
+  // operation. For now, we just link to the API.
+}
+
+async function rebuildProject() {
+  if (!currentProjectId) return;
+  showLoader('Собираю WAV…');
+  try {
+    const resp = await fetch(`/api/projects/${currentProjectId}/rebuild`, { method: 'POST' });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const data = await resp.json();
+    showToast(`Собрано: ${data.audio_path}`, 'success');
+  } catch (e) {
+    showToast(`Ошибка: ${e.message}`, 'error');
+  } finally {
+    hideLoader();
+  }
+}
+
+async function deleteProject() {
+  if (!currentProjectId) return;
+  if (!confirm('Удалить проект?')) return;
+  try {
+    await fetch(`/api/projects/${currentProjectId}`, { method: 'DELETE' });
+    showToast('Проект удалён', 'success');
+    $('projectDetailCard').style.display = 'none';
+    loadProjectsList();
+  } catch (e) { showToast(`Ошибка: ${e.message}`, 'error'); }
+}
+
 // Wire up the toolbar buttons on DOMContentLoaded.
 document.addEventListener('DOMContentLoaded', () => {
   // File upload → textarea
@@ -1155,6 +1440,36 @@ document.addEventListener('DOMContentLoaded', () => {
       $('metricsArea').classList.add('hidden');
     });
   }
+
+  // Voice profiles (Голоса tab)
+  const addProfileBtn = $('addProfileBtn');
+  if (addProfileBtn) addProfileBtn.addEventListener('click', addProfileFromForm);
+
+  // Projects (Проекты tab)
+  const createProjBtn = $('createProjBtn');
+  if (createProjBtn) createProjBtn.addEventListener('click', createProject);
+  const synthAllBtn = $('synthAllBtn');
+  if (synthAllBtn) synthAllBtn.addEventListener('click', synthAllSegments);
+  const rebuildBtn = $('rebuildBtn');
+  if (rebuildBtn) rebuildBtn.addEventListener('click', rebuildProject);
+  const deleteProjBtn = $('deleteProjBtn');
+  if (deleteProjBtn) deleteProjBtn.addEventListener('click', deleteProject);
+
+  // Load Голоса + Проекты data when their tabs are first opened
+  let profilesLoaded = false;
+  let projectsLoaded = false;
+  document.querySelectorAll('.tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      if (tab.dataset.tab === 'refs' && !profilesLoaded) {
+        profilesLoaded = true;
+        loadProfilesList();
+      }
+      if (tab.dataset.tab === 'projects' && !projectsLoaded) {
+        projectsLoaded = true;
+        loadProjectsList();
+      }
+    });
+  });
 
   // Keyboard shortcut: Ctrl+Shift+A (A for Accent) on the textarea.
   const ta = $('textInput');
