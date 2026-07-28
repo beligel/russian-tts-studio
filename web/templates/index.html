@@ -14,7 +14,10 @@
   <header class="topbar">
     <div class="brand">
       <span class="logo">🎙️</span>
-      <h1>Russian TTS Studio <span class="muted">Russian TTS Studio</span></h1>
+      <h1>Russian TTS Studio</h1>
+    </div>
+    <div class="engine-pills" id="enginePills" title="TTS-движок">
+      <!-- Populated by loadEngines() from /api/engines -->
     </div>
     <div class="status" id="statusBar">
       <span class="status-dot" id="statusDot"></span>
@@ -77,27 +80,32 @@
             <button class="btn btn-secondary btn-sm preset-btn" data-preset="narrator" title="Аудиокнига, рассказчик">Аудиокнига</button>
           </div>
 
-          <h3>Референсный голос</h3>
-          <div class="ref-picker">
-            <select id="refSelect">
-              <option value="">— Без референса (Silero) —</option>
-            </select>
-            <button class="btn" id="refreshRefs">↻</button>
-            <label class="btn btn-secondary">
-              + Загрузить
-              <input type="file" id="refUpload" accept="audio/*" hidden />
-            </label>
+          <!-- Voice strip: refs + profiles + silero + smart, unified -->
+          <div class="voice-strip">
+            <div class="strip-label">
+              <span>Голос</span>
+              <span class="muted" style="font-size:11px;">ref · profile · silero · smart</span>
+            </div>
+            <div class="voice-chips" id="voiceChips">
+              <!-- Populated by loadVoiceStrip() -->
+            </div>
+            <div class="voice-actions">
+              <button class="btn btn-secondary btn-sm" id="refreshRefs" title="Обновить список">↻</button>
+              <label class="btn btn-secondary btn-sm">
+                + Загрузить ref
+                <input type="file" id="refUpload" accept="audio/*" hidden />
+              </label>
+            </div>
           </div>
+          <!-- Hidden select for backward compat with synthesize() -->
+          <select id="refSelect" hidden>
+            <option value="">— Без референса (Silero) —</option>
+          </select>
 
           <details class="advanced">
             <summary>Расширенные настройки</summary>
-            <label>
-              TTS-движок
-              <select id="engineSelect">
-                <option value="voxcpm">VoxCPM2 (русский + 30 языков, рекомендуется)</option>
-                <option value="higgs">Higgs Audio v2 (multi-speaker, sound events)</option>
-              </select>
-            </label>
+            <!-- Engine moved to topbar pills; hidden input keeps synthesize() working -->
+            <input type="hidden" id="engineSelect" value="voxcpm" />
             <p class="muted" id="engineHint" style="margin:4px 0 8px 0;font-size:12px;">
               VoxCPM2: клонирование голоса, 48 кГц. Higgs: 100+ языков, диалоги, звуковые события.
             </p>

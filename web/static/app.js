@@ -18,6 +18,7 @@ const API = {
   postprocess: '/api/postprocess',
   audio: (n) => `/api/audio/${n}`,
   import: '/api/import',
+  voiceProfiles: '/api/voice-profiles',
 };
 
 const state = {
@@ -129,14 +130,162 @@ async function loadReferences() {
     const data = await apiFetch(API.references);
     state.references = data.references;
     const select = $('refSelect');
-    select.innerHTML = '<option value="">— Без референса (Silero) —</option>' +
-      data.references.map(r =>
-        `<option value="${r.path}">${r.name} (${r.duration_sec}s)</option>`
-      ).join('');
+    if (select) {
+      select.innerHTML = '<option value="">— Без референса (Silero) —</option>' +
+        data.references.map(r =>
+          `<option value="${r.path}">${r.name} (${r.duration_sec}s)</option>`
+        ).join('');
+    }
     renderReferenceList(data.references);
   } catch (e) {
     showToast(`Не удалось загрузить референсы: ${e.message}`, 'error');
   }
+  // Also refresh the voice strip (refs are part of it)
+  loadVoiceStrip();
+}
+
+// --- Voice strip: unified chips for refs + profiles + silero + smart ---
+
+// Silero built-in speakers (static — same as the fallback dropdown).
+const SILERO_SPEAKERS = [
+  { id: 'xenia', label: 'xenia (жен)', kind: 'silero' },
+  { id: 'aidar', label: 'aidar (муж)', kind: 'silero' },
+  { id: 'baya', label: 'baya (жен)', kind: 'silero' },
+  { id: 'kseniya', label: 'kseniya (жен)', kind: 'silero' },
+  { id: 'eugene', label: 'eugene (муж)', kind: 'silero' },
+];
+
+// Currently selected voice: { type: 'ref'|'profile'|'silero'|'smart', value: string }
+let selectedVoice = { type: 'ref', value: '' };
+
+async function loadVoiceStrip() {
+  const container = $('voiceChips');
+  if (!container) return;
+
+  const engine = $('engineSelect') ? $('engineSelect').value : 'voxcpm';
+  const chips = [];
+
+  // 1. Audio references from /api/references
+  try {
+    if (!state.references.length) {
+      const data = await apiFetch(API.references);
+      state.references = data.references || [];
+    }
+    for (const ref of state.references) {
+      chips.push({
+        type: 'ref',
+        value: ref.path,
+        label: ref.name,
+        kind: 'ref',
+        duration: ref.duration_sec,
+      });
+    }
+  } catch (e) { /* refs not loaded yet — skip */ }
+
+  // 2. Voice profiles from /api/voice-profiles (Higgs only, but show
+  //    for all engines — they're just inactive for non-Higgs)
+  try {
+    const resp = await fetch('/api/voice-profiles');
+    if (resp.ok) {
+      const data = await resp.json();
+      for (const p of (data.profiles || [])) {
+        chips.push({
+          type: 'profile',
+          value: `profile:${p.name}`,
+          label: p.name,
+          kind: 'profile',
+        });
+      }
+    }
+  } catch (e) { /* profiles not available — skip */ }
+
+  // 3. Silero speakers (always available as fallback)
+  for (const sp of SILERO_SPEAKERS) {
+    chips.push({
+      type: 'silero',
+      value: sp.id,
+      label: sp.label,
+      kind: 'silero',
+    });
+  }
+
+  // 4. Smart voice (Higgs only — picks voice from text, no reference)
+  if (engine === 'higgs') {
+    chips.push({
+      type: 'smart',
+      value: '',
+      label: '✨ smart voice',
+      kind: 'smart',
+    });
+  }
+
+  // Render chips
+  container.innerHTML = '';
+  for (const chip of chips) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'voice-chip';
+    btn.dataset.voiceType = chip.type;
+    btn.dataset.voiceValue = chip.value;
+    const kindLabel = chip.kind.toUpperCase();
+    const durLabel = chip.duration ? ` · ${chip.duration}s` : '';
+    btn.innerHTML = `${chip.label} <span class="kind">${kindLabel}</span>`;
+    btn.title = `${chip.kind}: ${chip.label}${durLabel}`;
+
+    // Highlight profiles/smart as disabled for non-Higgs engines
+    if (chip.type === 'profile' && engine !== 'higgs') {
+      btn.style.opacity = '0.5';
+      btn.title += ' (только Higgs)';
+    }
+    if (chip.type === 'smart' && engine !== 'higgs') {
+      btn.style.opacity = '0.5';
+    }
+
+    // Restore active state
+    if (selectedVoice.type === chip.type && selectedVoice.value === chip.value) {
+      btn.classList.add('active');
+    }
+
+    btn.addEventListener('click', () => {
+      container.querySelectorAll('.voice-chip').forEach(c => c.classList.remove('active'));
+      btn.classList.add('active');
+      selectedVoice = { type: chip.type, value: chip.value };
+      // Sync the hidden refSelect for backward compat with synthesize()
+      const sel = $('refSelect');
+      if (sel) {
+        if (chip.type === 'ref') {
+          sel.value = chip.value;
+        } else if (chip.type === 'silero') {
+          // Silero: empty ref + set speaker_fallback
+          sel.value = '';
+          const fb = $('speakerFallback');
+          if (fb) fb.value = chip.value;
+        } else if (chip.type === 'profile') {
+          // Profile: set refSelect to "profile:name" (Higgs understands it)
+          sel.value = chip.value;
+        } else if (chip.type === 'smart') {
+          // Smart: no ref, no silero — Higgs picks from text
+          sel.value = '';
+        }
+      }
+      showToast(`Голос: ${chip.label} (${chip.kind})`, 'info', 1500);
+    });
+    container.appendChild(btn);
+  }
+
+  // "Add" chip — links to the Голоса tab
+  const addChip = document.createElement('button');
+  addChip.type = 'button';
+  addChip.className = 'voice-chip add';
+  addChip.textContent = '+ добавить';
+  addChip.title = 'Перейти к управлению голосами';
+  addChip.addEventListener('click', () => {
+    $all('.tab').forEach(t => t.classList.remove('active'));
+    $all('.tab-pane').forEach(p => p.classList.remove('active'));
+    const refsTab = document.querySelector('[data-tab="refs"]');
+    if (refsTab) { refsTab.classList.add('active'); $('tab-refs').classList.add('active'); }
+  });
+  container.appendChild(addChip);
 }
 
 function renderReferenceList(refs) {
@@ -545,10 +694,11 @@ loadComfyStatus();
 loadEngines();
 
 async function loadEngines() {
-  // Render the engine <select> dynamically from /api/engines so the
-  // labels/tooltips match the server-side description. Engines that
+  // Render engine pills in the topbar from /api/engines. Engines that
   // aren't installed (e.g. Higgs without the upstream repo) are
-  // rendered as disabled options with an install hint.
+  // rendered as disabled pills. The hidden <select id="engineSelect">
+  // is kept in sync for backward compat with synthesize().
+  const pillsContainer = $('enginePills');
   const sel = $('engineSelect');
   let engines = [];
   let active = 'voxcpm';
@@ -559,41 +709,50 @@ async function loadEngines() {
       active = data.active || data.default || 'voxcpm';
     }
   } catch (e) {
-    // Fall back to the static options in the template; no toast to avoid
-    // alarming the user if the server is just slow to respond.
     console.warn('loadEngines failed:', e);
   }
   lastLoadedEngines = engines;
 
-  // Populate the <select> (still used by synthesize())
-  if (sel && engines.length) {
-    const current = sel.value;
-    sel.innerHTML = '';
+  // Populate the topbar pills
+  if (pillsContainer && engines.length) {
+    pillsContainer.innerHTML = '';
     for (const eng of engines) {
-      const opt = document.createElement('option');
-      opt.value = eng.id;
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'engine-pill';
+      btn.dataset.engineId = eng.id;
       const available = eng.available !== false;
-      opt.textContent = eng.label || eng.id;
-      opt.title = eng.description || '';
+      // Short label for the pill (first word or short form)
+      const shortLabel = (eng.id === 'voxcpm') ? 'VoxCPM2'
+                       : (eng.id === 'higgs') ? 'Higgs Audio'
+                       : (eng.label || eng.id).split(' ')[0];
+      btn.textContent = shortLabel;
+      btn.title = eng.description || '';
       if (!available) {
-        opt.disabled = true;
-        opt.textContent = (eng.label || eng.id) + ' (не установлен)';
+        btn.disabled = true;
+        btn.textContent = shortLabel + ' (не установлен)';
       }
-      if (eng.id === active && available) opt.selected = true;
-      sel.appendChild(opt);
-    }
-    if (current && [...sel.options].some(o => o.value === current && !o.disabled)) {
-      sel.value = current;
+      if (eng.id === active && available) btn.classList.add('active');
+      btn.addEventListener('click', () => {
+        if (btn.disabled) return;
+        pillsContainer.querySelectorAll('.engine-pill').forEach(p => p.classList.remove('active'));
+        btn.classList.add('active');
+        if (sel) sel.value = eng.id;
+        applyProsodyEngineVisibility(eng.id);
+        updateEngineHint(eng.id, engines);
+        // Reload voice strip — available voice types depend on engine
+        loadVoiceStrip();
+      });
+      pillsContainer.appendChild(btn);
     }
   }
 
-  // Show/hide the prosody panel based on the active engine.
-  applyProsodyEngineVisibility((sel && sel.value) || active);
+  // Sync the hidden select
+  if (sel) sel.value = active;
 
-  // Update the engine hint paragraph with the selected engine's
-  // description (truncated) so the user sees what the current engine
-  // does without opening the dropdown tooltip.
-  updateEngineHint((sel && sel.value) || active, engines);
+  // Show/hide the prosody panel based on the active engine.
+  applyProsodyEngineVisibility(active);
+  updateEngineHint(active, engines);
 }
 
 function updateEngineHint(engineId, engines) {
