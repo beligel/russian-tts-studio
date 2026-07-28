@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-click launcher for XTTS Russian TTS Studio.
+# One-click launcher for Russian TTS Studio.
 # Double-click this file in your file manager, or run:  ./start.sh
 #
 # What it does:
@@ -17,7 +17,7 @@ cd "$PROJECT_ROOT"
 
 # Upstream CosyVoice (the upstream Chinese TTS model) is a source-only
 # dependency (no setup.py / pyproject.toml). This project no longer
-# requires it (the only TTS engine shipped is XTTS-v2), but we still
+# requires it (the only TTS engine shipped is VoxCPM2), but we still
 # set PYTHONPATH when a sibling checkout is present, so a user who
 # keeps CosyVoice/ around for their own experiments won't be surprised
 # by missing imports.
@@ -34,12 +34,6 @@ done
 if [ -n "$COSYVOICE_SRC" ]; then
     export PYTHONPATH="$COSYVOICE_SRC${PYTHONPATH:+:$PYTHONPATH}"
 fi
-
-# Coqui TTS (XTTS-v2) asks the user to confirm the non-commercial CPML
-# license on first model download — without this env var the call blocks
-# on stdin and the web server never starts. The user accepts the
-# non-commercial terms via the engine picker in the UI.
-export COQUI_TOS_AGREED=1
 
 # Default port for the Web UI. Override with `PORT=9000 ./start.sh --port 9000`
 # or just `./start.sh --port 9000`. Keep this in sync with web/run.py and

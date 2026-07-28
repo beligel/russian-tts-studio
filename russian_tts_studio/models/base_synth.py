@@ -1,4 +1,4 @@
-"""Base dataclasses shared by all TTS engines (XTTS, Silero).
+"""Base dataclasses shared by all TTS engines (VoxCPM2, Silero).
 
 Extracted from the old cosyvoice_synth.py so that the wrapper package
 no longer depends on the Russian TTS Studio upstream module at all.

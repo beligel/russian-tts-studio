@@ -1,4 +1,4 @@
-"""CLI for the production TTS pipeline (XTTS-v2 + Silero fallback).
+"""CLI for the production TTS pipeline (VoxCPM2 + Silero fallback).
 
 Usage:
     python scripts/inference/run_pipeline.py \

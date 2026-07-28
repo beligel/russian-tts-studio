@@ -14,6 +14,7 @@ const API = {
   comfyExport: '/api/comfyui/export-speaker',
   engines: '/api/engines',
   status: '/api/status',
+  heartbeat: '/api/heartbeat',
   postprocess: '/api/postprocess',
   audio: (n) => `/api/audio/${n}`,
 };
@@ -104,6 +105,19 @@ async function refreshStatus() {
 
 setInterval(refreshStatus, 10000);
 refreshStatus();
+
+// Heartbeat for browser-mode auto-shutdown: as long as the tab is open,
+// we ping the server every 5 seconds. Closing the tab stops the pings,
+// and the desktop launcher exits after a short grace period.
+async function sendHeartbeat() {
+  try {
+    await fetch(API.heartbeat, { method: 'POST', cache: 'no-store' });
+  } catch {
+    // Ignore network errors — the server may already be gone.
+  }
+}
+setInterval(sendHeartbeat, 5000);
+sendHeartbeat();
 
 // ---------------------------------------------------------------------------
 // References
@@ -217,14 +231,16 @@ $('synthBtn').addEventListener('click', async () => {
   form.append('speed', $('speedInput').value || '1.0');
   form.append('enable_fallback', $('enableFallback').checked);
   form.append('enable_postprocess', $('enablePostprocess').checked);
+  form.append('enable_clamp', $('enableClamp') ? $('enableClamp').checked : true);
   form.append('enable_quality_check', $('enableQualityCheck').checked);
-  form.append('engine', $('engineSelect') ? $('engineSelect').value : 'xtts');
-  // Prosody (VoxCPM-only) — always sent, ignored by XTTS/Silero.
-  // Backend already gates on engine=='voxcpm', so we just forward the values.
+  form.append('engine', $('engineSelect') ? $('engineSelect').value : 'voxcpm');
+  // Prosody (VoxCPM-only) — always sent, ignored by Silero. Backend
+  // already gates on engine=='voxcpm', so we just forward the values.
   form.append('enable_prosody', $('enableProsody') ? $('enableProsody').checked : false);
   for (const f of [
     'pauseMsComma', 'pauseMsSemicolon', 'pauseMsColon', 'pauseMsPeriod',
     'pauseMsExclamation', 'pauseMsQuestion', 'pauseMsEllipsis',
+    'pauseMsWordGap',
   ]) {
     const el = $(f);
     if (el) form.append(
@@ -246,11 +262,11 @@ $('synthBtn').addEventListener('click', async () => {
   }
 });
 
-// If the requested engine is in a different venv, the server re-execs
-// itself (~5-10s). The current HTTP request is dropped, the new one
-// retries against the now-correct process. This wrapper handles that:
-// network error / 5xx / 503 → wait 3s, ping /api/engines for health,
-// then retry the synthesize POST. Up to 3 attempts.
+// If the server is mid-restart (model load, watchdog cycle, etc.) the
+// current HTTP request is dropped, the new one retries against the
+// recovered process. This wrapper handles that: network error / 5xx /
+// 503 → wait 3s, ping /api/engines for health, then retry the
+// synthesize POST. Up to 3 attempts.
 async function synthesizeWithRetry(form, maxAttempts = 3) {
   let lastErr = null;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -259,14 +275,14 @@ async function synthesizeWithRetry(form, maxAttempts = 3) {
     } catch (e) {
       lastErr = e;
       const msg = String(e.message || '');
-      const looksLikeReexec = /reexec|перезапуск|503|HTTP 5\d\d|NetworkError|Failed to fetch/i.test(msg);
-      if (!looksLikeReexec || attempt === maxAttempts) throw e;
-      // Tell the user, wait for the new process to come up, retry.
-      showLoader(`Перезапускаю движок (попытка ${attempt + 1}/${maxAttempts})…`);
+      const looksLikeRestart = /перезапуск|503|HTTP 5\d\d|NetworkError|Failed to fetch/i.test(msg);
+      if (!looksLikeRestart || attempt === maxAttempts) throw e;
+      // Tell the user, wait for the server to come back, retry.
+      showLoader(`Сервер перезапускается (попытка ${attempt + 1}/${maxAttempts})…`);
       await sleep(3000);
       // Block until /api/engines responds (the new uvicorn worker is up).
       const ok = await waitForServer(8);
-      if (!ok) throw new Error('Сервер не отвечает после перезапуска движка');
+      if (!ok) throw new Error('Сервер не отвечает после перезапуска');
     }
   }
   throw lastErr;
@@ -527,98 +543,68 @@ loadReferences();
 loadComfyStatus();
 loadEngines();
 
-// Wire up the engine-switch button group IMMEDIATELY (synchronously) so
-// clicks are never lost to a race with the async /api/engines fetch. The
-// later `loadEngines()` call may still update aria-pressed to match the
-// server's reported "active" engine, but user input is honoured from
-// the first click.
-(function initEngineSwitch() {
-  const sel = $('engineSelect');
-  const switchEl = $('engineSwitch');
-  if (!switchEl) return;
-  switchEl.querySelectorAll('.engine-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const want = btn.dataset.engine;
-      // Toggle aria-pressed.
-      switchEl.querySelectorAll('.engine-btn').forEach(b =>
-        b.setAttribute('aria-pressed', b === btn ? 'true' : 'false')
-      );
-      // Make sure the <select> has a matching <option> — if loadEngines()
-      // hasn't run yet (or the engine isn't in its list), the option
-      // would be missing and sel.value would silently keep the old value.
-      if (sel && want) {
-        let opt = sel.querySelector(`option[value="${CSS.escape(want)}"]`);
-        if (!opt) {
-          opt = document.createElement('option');
-          opt.value = want;
-          opt.textContent = want;
-          sel.appendChild(opt);
-        }
-        sel.value = want;
-      }
-    });
-  });
-})();
-
 async function loadEngines() {
-  // Two UI surfaces show the engine choice: an always-visible button group
-  // (.engine-btn) and the legacy <select id="engineSelect"> inside the
-  // "Advanced settings" details. Keep both in sync with /api/engines.
-  // The click handlers are already wired by initEngineSwitch() above —
-  // this function only refreshes the option labels / active highlight
-  // from /api/engines, it does NOT re-register the handlers.
+  // Render the engine <select> dynamically from /api/engines so the
+  // labels/tooltips match the server-side description. Engines that
+  // aren't installed (e.g. Higgs without the upstream repo) are
+  // rendered as disabled options with an install hint.
   const sel = $('engineSelect');
-  const switchEl = $('engineSwitch');
   let engines = [];
-  let active = 'xtts';
+  let active = 'voxcpm';
   try {
     const data = await apiFetch(API.engines);
     if (data && Array.isArray(data.engines) && data.engines.length) {
       engines = data.engines;
-      active = data.active || data.default || 'xtts';
+      active = data.active || data.default || 'voxcpm';
     }
   } catch (e) {
     // Fall back to the static options in the template; no toast to avoid
     // alarming the user if the server is just slow to respond.
     console.warn('loadEngines failed:', e);
   }
+  lastLoadedEngines = engines;
 
-  // 1) Populate the legacy <select> (still used by synthesize())
-  if (sel) {
-    if (engines.length) {
-      // Preserve the user's current selection across the rebuild.
-      const current = sel.value;
-      sel.innerHTML = '';
-      for (const eng of engines) {
-        const opt = document.createElement('option');
-        opt.value = eng.id;
-        opt.textContent = eng.label || eng.id;
-        opt.title = eng.description || '';
-        if (eng.id === active) opt.selected = true;
-        sel.appendChild(opt);
+  // Populate the <select> (still used by synthesize())
+  if (sel && engines.length) {
+    const current = sel.value;
+    sel.innerHTML = '';
+    for (const eng of engines) {
+      const opt = document.createElement('option');
+      opt.value = eng.id;
+      const available = eng.available !== false;
+      opt.textContent = eng.label || eng.id;
+      opt.title = eng.description || '';
+      if (!available) {
+        opt.disabled = true;
+        opt.textContent = (eng.label || eng.id) + ' (не установлен)';
       }
-      if (current && [...sel.options].some(o => o.value === current)) {
-        sel.value = current;
-      }
+      if (eng.id === active && available) opt.selected = true;
+      sel.appendChild(opt);
+    }
+    if (current && [...sel.options].some(o => o.value === current && !o.disabled)) {
+      sel.value = current;
     }
   }
 
-  // 2) Sync the visible engine-switch button group. Never override a
-  // user choice that disagrees with the server's "active" engine —
-  // honour the button's current aria-pressed state.
-  if (switchEl) {
-    const userPicked = switchEl.querySelector('.engine-btn[aria-pressed="true"]');
-    if (!userPicked) {
-      switchEl.querySelectorAll('.engine-btn').forEach(btn =>
-        btn.setAttribute('aria-pressed', btn.dataset.engine === active ? 'true' : 'false')
-      );
-    }
+  // Show/hide the prosody panel based on the active engine.
+  applyProsodyEngineVisibility((sel && sel.value) || active);
+
+  // Update the engine hint paragraph with the selected engine's
+  // description (truncated) so the user sees what the current engine
+  // does without opening the dropdown tooltip.
+  updateEngineHint((sel && sel.value) || active, engines);
+}
+
+function updateEngineHint(engineId, engines) {
+  const hint = $('engineHint');
+  if (!hint) return;
+  const eng = engines.find(e => e.id === engineId);
+  if (eng && eng.description) {
+    // Keep the hint short — the full description is in the option tooltip.
+    hint.textContent = eng.description.split('. ').slice(0, 1).join('. ') + '.';
+  } else {
+    hint.textContent = '';
   }
-  // 3) Show/hide the prosody panel based on the active engine.
-  const activeId = (switchEl && switchEl.querySelector('.engine-btn[aria-pressed="true"]'))?.dataset.engine
-    || (sel && sel.value)
-    || active;
-  applyProsodyEngineVisibility(activeId);
 }
 
 // ---------------------------------------------------------------------------
@@ -626,13 +612,18 @@ async function loadEngines() {
 // ---------------------------------------------------------------------------
 
 const PROSODY_PRESETS = {
-  // Conservative: comma=500, period=900, !?=1000, ellipsis=1300, ;:=700
-  conservative: { comma: 500, semicolon: 700, colon: 700, period: 900, exclamation: 1000, question: 1000, ellipsis: 1300 },
-  // Dramatic: ×1.5
-  dramatic:     { comma: 750, semicolon: 1050, colon: 1050, period: 1350, exclamation: 1500, question: 1500, ellipsis: 1950 },
+  // Conservative defaults. Kept in sync with DEFAULT_PAUSE_MS in
+  // russian_tts_studio/utils/prosody.py — keep both in lockstep.
+  // (Shrunk from comma=500, period=900, !?=1000, ellipsis=1300, ;:=700
+  //  to remove a perceived stutter on sentence-final syllables.)
+  conservative: { comma: 250, semicolon: 350, colon: 350, period: 500, exclamation: 550, question: 550, ellipsis: 700 },
   // Off: all zeros
-  off:          { comma: 0, semicolon: 0, colon: 0, period: 0, exclamation: 0, question: 0, ellipsis: 0 },
+  off:          { comma: 0, semicolon: 0, colon: 0, period: 0, exclamation: 0, question: 0, ellipsis: 0, wordGap: 0 },
 };
+// Dramatic: ×1.5 of conservative, derived so the two stay in sync.
+PROSODY_PRESETS.dramatic = Object.fromEntries(
+  Object.entries(PROSODY_PRESETS.conservative).map(([k, v]) => [k, Math.round(v * 1.5)])
+);
 
 function applyProsodyEngineVisibility(engine) {
   const panel = $('prosodyPanel');
@@ -640,8 +631,8 @@ function applyProsodyEngineVisibility(engine) {
   const wants = (panel.dataset.engineOnly || '').split(',').map(s => s.trim());
   const isRelevant = wants.includes(engine);
   panel.hidden = !isRelevant;
-  // If we just hid the panel because the user switched to XTTS, also
-  // uncheck the master switch so a later re-display starts clean.
+  // If we just hid the panel (engine no longer VoxCPM), also uncheck
+  // the master switch so a later re-display starts clean.
   if (!isRelevant) {
     const cb = $('enableProsody');
     if (cb) cb.checked = false;
@@ -655,6 +646,7 @@ function applyProsodyPreset(name) {
     comma: 'pauseMsComma', semicolon: 'pauseMsSemicolon', colon: 'pauseMsColon',
     period: 'pauseMsPeriod', exclamation: 'pauseMsExclamation',
     question: 'pauseMsQuestion', ellipsis: 'pauseMsEllipsis',
+    wordGap: 'pauseMsWordGap',
   };
   for (const [k, id] of Object.entries(map)) {
     const el = $(id);
@@ -692,15 +684,16 @@ function applyProsodyPreset(name) {
     if (btn) btn.addEventListener('click', () => applyProsodyPreset(name));
   }
 
-  // Sync visibility when the engine switch changes. The button click
-  // handler in initEngineSwitch() updates the <select>, so we listen
-  // there too.
+  // Sync visibility when the engine select changes.
   const sel = $('engineSelect');
-  if (sel) sel.addEventListener('change', () => applyProsodyEngineVisibility(sel.value));
-  const switchEl = $('engineSwitch');
-  if (switchEl) {
-    switchEl.querySelectorAll('.engine-btn').forEach(btn => {
-      btn.addEventListener('click', () => applyProsodyEngineVisibility(btn.dataset.engine));
+  if (sel) {
+    sel.addEventListener('change', () => {
+      applyProsodyEngineVisibility(sel.value);
+      updateEngineHint(sel.value, lastLoadedEngines);
     });
   }
 })();
+
+// Cache of the last /api/engines response — used by the change handler
+// to update the hint without a re-fetch. Populated by loadEngines().
+let lastLoadedEngines = [];

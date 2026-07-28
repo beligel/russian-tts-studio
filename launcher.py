@@ -83,7 +83,7 @@ def find_venvs() -> list[tuple[str, Path]]:
     for name in (".venv", ".venv-voxcpm"):
         p = PROJECT_ROOT / name / "bin" / "python"
         if p.exists():
-            label = "XTTS v2" if name == ".venv" else "VoxCPM2"
+            label = "VoxCPM2 (default)" if name == ".venv" else "VoxCPM2 (legacy .venv-voxcpm)"
             found.append((f"{label}  ({name})", p))
     return found
 

@@ -41,18 +41,6 @@
             rows="8"
           >Привет! Это тестовая фраза на русском языке. Russian TTS Studio3 умеет клонировать голос по короткому референсу.</textarea>
 
-          <h3 style="margin-top:18px;margin-bottom:6px;color:#c8cfe0;font-size:14px;">⚙️ Голосовой движок</h3>
-          <div class="engine-switch" id="engineSwitch" role="group" aria-label="Голосовой движок" style="display:flex;gap:12px;margin:6px 0 18px 0;padding:6px;background:#131826;border:2px solid #4a6cf7;border-radius:14px;width:100%;box-sizing:border-box;">
-            <button type="button" class="engine-btn" data-engine="xtts" aria-pressed="true" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:18px 14px;min-height:76px;background:#4a6cf7;color:#ffffff;border:2px solid #6b8bff;border-radius:10px;font-family:inherit;font-size:18px;font-weight:700;cursor:pointer;text-align:center;box-shadow:0 4px 18px rgba(74,108,247,0.45);">
-              <span class="engine-name" style="font-size:18px;font-weight:700;line-height:1.1;">🎤 XTTS v2</span>
-              <span class="engine-note" style="font-size:12px;font-weight:400;color:rgba(255,255,255,0.85);line-height:1.2;">русский · zero-shot клон</span>
-            </button>
-            <button type="button" class="engine-btn" data-engine="voxcpm" aria-pressed="false" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:18px 14px;min-height:76px;background:#1c2236;color:#c8cfe0;border:2px solid transparent;border-radius:10px;font-family:inherit;font-size:18px;font-weight:700;cursor:pointer;text-align:center;">
-              <span class="engine-name" style="font-size:18px;font-weight:700;line-height:1.1;">🌊 VoxCPM2</span>
-              <span class="engine-note" style="font-size:12px;font-weight:400;color:#8a92a8;line-height:1.2;">30 языков · 48 кГц</span>
-            </button>
-          </div>
-
           <div class="row">
             <label class="grow">
               <span>Стиль (instruct)</span>
@@ -81,9 +69,13 @@
             <label>
               TTS-движок
               <select id="engineSelect">
-                <option value="xtts">XTTS v2 (русский, рекомендуется)</option>
+                <option value="voxcpm">VoxCPM2 (русский + 30 языков, рекомендуется)</option>
+                <option value="higgs">Higgs Audio v2 (multi-speaker, sound events)</option>
               </select>
             </label>
+            <p class="muted" id="engineHint" style="margin:4px 0 8px 0;font-size:12px;">
+              VoxCPM2: клонирование голоса, 48 кГц. Higgs: 100+ языков, диалоги, звуковые события.
+            </p>
             <label>
               <input type="checkbox" id="enableFallback" checked />
               Использовать Silero как fallback
@@ -91,6 +83,10 @@
             <label>
               <input type="checkbox" id="enablePostprocess" checked />
               Пост-обработка (trim + normalize)
+            </label>
+            <label style="padding-left: 20px;">
+              <input type="checkbox" id="enableClamp" checked />
+              Срезать длинные паузы (>450 мс → 180 мс)
             </label>
             <label>
               <input type="checkbox" id="enableQualityCheck" checked />
@@ -149,6 +145,15 @@
                 <input type="number" id="pauseMsColon" min="0" max="5000" step="50" value="0" /> мс
               </label>
             </div>
+            <div style="margin:6px 0;">
+              <label style="display:flex;align-items:center;gap:8px;">
+                <span>Пауза между словами</span>
+                <input type="number" id="pauseMsWordGap" min="0" max="1000" step="10" value="0" style="width:80px" /> мс
+              </label>
+              <p class="muted" style="font-size:11px;margin:4px 0 0 0;">
+                Применяется только к пробелам без знаков препинания.
+              </p>
+            </div>
             <div class="row" style="margin-top:8px;">
               <button class="btn btn-secondary" id="prosodyPresetConservative" type="button">
                 Консервативно
@@ -162,7 +167,7 @@
             </div>
             <p class="muted" id="prosodyHint" style="font-size:11px;margin:6px 0 0 0;">
               Пресеты:&nbsp;
-              <em>консервативно</em> — ,=300 ;=400 :=400 .=600 !=?=700 …=900 мс;
+              <em>консервативно</em> — ,=250 ;=350 :=350 .=500 !=?=550 …=700 мс;
               <em>драматично</em> — ×1.5 от консервативных.
             </p>
           </details>

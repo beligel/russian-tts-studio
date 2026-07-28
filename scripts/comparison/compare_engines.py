@@ -1,9 +1,9 @@
-"""Compare XTTS-v2 and Silero on identical Russian phrases.
+"""Compare VoxCPM2 and Silero on identical Russian phrases.
 
 Usage:
     python scripts/comparison/compare_engines.py \
         --reference output/reference/ru_voice.wav \
-        --engines silero,xtts \
+        --engines silero,voxcpm \
         --output-dir output/comparison
 
 Outputs:
@@ -251,8 +251,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Compare TTS engines on Russian")
     parser.add_argument("--reference", "-r", type=Path, required=True)
     parser.add_argument("--engines", "-e",
-                        default="silero,xtts",
-                        help="Comma-separated: silero,xtts")
+                        default="silero,voxcpm",
+                        help="Comma-separated: silero,voxcpm")
     parser.add_argument("--output-dir", "-o", type=Path,
                         default=PROJECT_ROOT / "output" / "comparison")
     parser.add_argument("--reference-text", default=None)

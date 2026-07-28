@@ -19,81 +19,6 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 
-def _reexec_for_engine(engine: str) -> None:
-    """Replace the current process with the venv that hosts the requested engine.
-
-    Two engines, two venvs (torch 2.3.1 + Coqui in .venv, torch 2.12 + voxcpm
-    in .venv-voxcpm — they can't coexist). On each /api/synthesize we re-exec
-    the uvicorn worker into the right interpreter. The in-flight HTTP
-    request is closed and the client retries against the new process.
-
-    Safe to call: no-op if we're already in the right venv, if the target
-    venv doesn't exist, or if RUSSIAN_TTS_NO_AUTO_REEXEC=1.
-    """
-    if os.environ.get("RUSSIAN_TTS_NO_AUTO_REEXEC") == "1":
-        return
-    # If the user opted out of MMS_FA downloads (env var MMS_FA_SKIP_DOWNLOAD=1
-    # was set before startup), propagate it into the child so the new venv
-    # sees the same flag. We never *set* this automatically — only pass
-    # through the user's intent.
-    venvs = {
-        "xtts":   PROJECT_ROOT / ".venv"        / "bin" / "python",
-        "voxcpm": PROJECT_ROOT / ".venv-voxcpm" / "bin" / "python",
-    }
-    target = venvs.get(engine)
-    if target is None or not target.exists():
-        return
-    # NB: we intentionally do NOT use .resolve() here. Both venvs ship
-    # .venv/bin/python and .venv-voxcpm/bin/python as symlinks to a shared
-    # system python3 (e.g. /usr/bin/python3.12), so resolving collapses
-    # them onto the same path and the "already in the right venv" check
-    # would always be True — reexec would never happen. Comparing the
-    # symlink path strings as-is distinguishes the two venvs reliably.
-    try:
-        already = Path(sys.executable).absolute() == target.absolute()
-    except OSError:
-        already = False
-    if already:
-        return
-    print(
-        f"\n  ⟳  engine={engine!r} требует {target} — "
-        f"перезапускаю сервер под нужный venv\n",
-        file=sys.stderr,
-        flush=True,
-    )
-    # Preserve PYTHONPATH and sys.argv[0] so the new interpreter can find
-    # this package. `os.execv` resets sys.path from scratch; without
-    # PROJECT_ROOT on it, `import web.app` raises ModuleNotFoundError
-    # (we hit this in .venv-voxcpm because `web` isn't pip-installed —
-    # it's discovered only via sys.path[0] when running `python -m`).
-    existing_pp = os.environ.get("PYTHONPATH", "")
-    parts = [str(PROJECT_ROOT)]
-    if existing_pp:
-        parts.append(existing_pp)
-    os.environ["PYTHONPATH"] = os.pathsep.join(parts)
-    # Pass sys.argv[0] as an absolute path so the new python inserts
-    # the script's directory (web/) into sys.path[0] — same effect as
-    # `python -m web.run` had in the parent process.
-    argv = list(sys.argv)
-    if argv and not Path(argv[0]).is_absolute():
-        argv[0] = str(Path(argv[0]).resolve())
-    # Strip the no-auto-reexec one-shot guard from the environment we hand
-    # to the new process. Setting `os.environ[...]` here mutates the
-    # current process so the same request can't loop back into us; but
-    # `os.execv` inherits os.environ, so the new process would also see
-    # "1" and refuse any future reexec (defeating the whole feature).
-    # Pass an env explicitly without the guard so reexec remains
-    # bidirectional.
-    child_env = {k: v for k, v in os.environ.items() if k != "RUSSIAN_TTS_NO_AUTO_REEXEC"}
-    os.execve(str(target), [str(target), *argv], child_env)
-
-
-# Backwards-compatible alias for older callers.
-def _reexec_into_voxcpm_venv() -> None:
-    """Deprecated: use _reexec_for_engine('voxcpm')."""
-    _reexec_for_engine("voxcpm")
-
-
 from fastapi import (  # noqa: E402
     FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect,
 )
@@ -190,8 +115,8 @@ _auto_disable_mms_fa_download()
 
 
 app = FastAPI(
-    title="XTTS Russian TTS",
-    description="Web UI for XTTS-v2 voice cloning + Silero fallback",
+    title="Russian TTS Studio (VoxCPM2 + Silero)",
+    description="Web UI for VoxCPM2 voice cloning + Silero fallback",
     version="0.2.0",
 )
 app.add_middleware(
@@ -201,6 +126,20 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def _active_request_tracker(request, call_next):
+    """Track active HTTP requests so the heartbeat watchdog doesn't
+    kill the server during long synthesis operations."""
+    with _State._req_lock:
+        _State.active_requests += 1
+    try:
+        response = await call_next(request)
+        return response
+    finally:
+        with _State._req_lock:
+            _State.active_requests -= 1
 
 WEB_DIR = Path(__file__).resolve().parent
 # Force no-cache on every static file so the browser cannot serve stale HTML/JS/CSS
@@ -229,20 +168,24 @@ class _State:
     sim_calc: SpeakerSimilarityCalculator | None = None
     comfyui_config: ComfyUIConfig | None | object = None  # cached discover() result
     comfyui_resolved: bool = False  # whether we've tried to discover yet
+    last_heartbeat: float = 0.0  # updated by /api/status and /api/heartbeat
+    # Active request counter — incremented by middleware on every
+    # incoming request, decremented on response. The heartbeat watchdog
+    # checks this to avoid killing the server during long synthesis.
+    active_requests: int = 0
+    _req_lock = threading.Lock()
     lock = threading.Lock()
 
     @classmethod
     def get_pipeline(
-        cls, device: str = "auto", engine: str = "xtts",
+        cls, device: str = "auto", engine: str = "voxcpm",
     ) -> TTSPipeline:
         """Return a TTSPipeline configured for ``engine``/``device``.
 
-        Different engines load different model weights (F5-TTS vs
-        Russian TTS Studio3 vs XTTS-v2), so we cannot share a pipeline across
-        engines — when the requested engine changes we tear down the
-        cached pipeline and build a new one. Switching engine
-        mid-process is therefore slow (one full model load) but the UI
-        only requests one engine per page load in practice.
+        The pipeline is rebuilt whenever ``engine`` or ``device``
+        changes. Accepted engines: ``"voxcpm"`` (default, OpenBMB
+        VoxCPM2) and ``"higgs"`` (Boson AI Higgs Audio v2 — requires
+        the upstream ``boson-ai/higgs-audio`` repo installed).
         """
         with cls.lock:
             if (
@@ -330,7 +273,7 @@ async def health() -> dict:
     return {
         "status": "ok",
         "pipeline_loaded": _State.pipeline is not None and _State.pipeline._initialized,
-        "engine": _State.pipeline_engine or "xtts",
+        "engine": _State.pipeline_engine or "voxcpm",
         "version": "0.2.0",
     }
 
@@ -339,47 +282,838 @@ async def health() -> dict:
 async def engines() -> dict:
     """List available TTS engines and which one is currently active.
 
-    XTTS-v2 (default) and VoxCPM2 are selectable as primaries. Silero
-    is always available as a fallback but is not selectable as a
-    primary "engine" (it's invoked automatically when XTTS QC fails
-    or no reference is given).
-
-    Note: VoxCPM2 lives in a separate venv (.venv-voxcpm). The web
-    server can be started from either venv; if you started from
-    .venv-voxcpm the import will succeed and the engine will be
-    selectable, otherwise selecting it will fail-fast with a clear
-    "Cannot import voxcpm" error.
+    VoxCPM2 is the default primary. Higgs Audio v2 is available when
+    the upstream ``boson-ai/higgs-audio`` repo is installed (the
+    pipeline falls back to VoxCPM2 if the package is missing). Silero
+    is always available as a fallback (kicks in automatically when the
+    primary engine's QC fails or no reference audio is given).
     """
+    # Detect whether the Higgs engine is actually importable so the
+    # UI can grey it out / show an install hint when it's not.
+    higgs_available = True
+    try:
+        import importlib
+        importlib.import_module("boson_multimodal")
+    except ImportError:
+        higgs_available = False
+
+    engine_list = [
+        {
+            "id": "voxcpm",
+            "label": "VoxCPM2 (русский + 30 языков, рекомендуется)",
+            "description": (
+                "OpenBMB VoxCPM2 — 2B-параметров, диффузионно-авторегрессионный. "
+                "Zero-shot клонирование, 48 кГц. "
+                "✅ Лицензия Apache-2.0."
+            ),
+        },
+        {
+            "id": "higgs",
+            "label": "Higgs Audio v2 (100+ языков, multi-speaker, sound events)",
+            "description": (
+                "Boson AI Higgs Audio v2 — text-audio foundation model. "
+                "Zero-shot клонирование, multi-speaker диалоги, smart voice, "
+                "звуковые события ([laugh]/[music]), ударения (U+0301). 24 кГц. "
+                "✅ Лицензия Apache-2.0 (v2 3B). "
+                + ("✅ Установлен." if higgs_available
+                   else "⚠️ Не установлен: pip install -e /path/to/higgs-audio")
+            ),
+            "available": higgs_available,
+        },
+    ]
     return {
-        "default": "xtts",
-        "active": _State.pipeline_engine or "xtts",
-        "engines": [
-            {
-                "id": "xtts",
-                "label": "XTTS v2 (русский)",
-                "description": (
-                    "Coqui XTTS v2 — мультиязычный, включая русский. "
-                    "Zero-shot клонирование по 6-10 с референса. "
-                    "⚠️ Лицензия CPML (некоммерческая)."
-                ),
-            },
-            {
-                "id": "voxcpm",
-                "label": "VoxCPM2 (русский + 30 языков)",
-                "description": (
-                    "OpenBMB VoxCPM2 — 2B-параметров, диффузионно-авторегрессионный. "
-                    "Zero-shot клонирование, 48 кГц, лучше XTTS на длинных "
-                    "русских фразах и без CAPS-ограничений словаря. "
-                    "✅ Лицензия Apache-2.0. ⚠️ Требует .venv-voxcpm."
-                ),
-            },
-        ],
+        "default": "voxcpm",
+        "active": _State.pipeline_engine or "voxcpm",
+        "engines": engine_list,
     }
+
+
+# ---------------------------------------------------------------------------
+# Routes — file import + long-form
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/import")
+async def import_file_endpoint(file: UploadFile = File(...)) -> JSONResponse:
+    """Import a .txt / .md / .docx file and return text + chapter structure.
+
+    The UI can then feed the returned ``text`` into ``/api/markup/parse``
+    or ``/api/synthesize`` (with ``enable_markup=true``).
+    """
+    from russian_tts_studio.text import detect_chapters, import_file
+
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No filename")
+    ext = Path(file.filename).suffix.lower()
+    if ext not in (".txt", ".md", ".markdown", ".docx"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported format: {ext}. Allowed: .txt, .md, .markdown, .docx",
+        )
+
+    # Save upload to a temp file, then import.
+    timestamp = int(time.time() * 1000)
+    safe_name = "".join(c if c.isalnum() or c in "-_." else "_" for c in file.filename)
+    dest = UPLOAD_DIR / f"{timestamp}_{safe_name}"
+    with open(dest, "wb") as out:
+        shutil.copyfileobj(file.file, out)
+
+    try:
+        text, source_format = import_file(dest)
+    except ImportError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    except Exception as e:
+        logger.exception("Import failed: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+    chapters = detect_chapters(text)
+    return JSONResponse({
+        "text": text,
+        "source_format": source_format,
+        "char_count": len(text),
+        "chapters": [
+            {
+                "title": c.title,
+                "char_start": c.char_start,
+                "char_end": c.char_end,
+                "is_preamble": c.is_preamble,
+            }
+            for c in chapters
+        ],
+    })
+
+
+@app.post("/api/longform/chunk")
+async def longform_chunk(
+    text: str = Form(...),
+    max_chars: int = Form(200),
+    max_sentences: int = Form(4),
+) -> JSONResponse:
+    """Chunk long-form text into TTS-safe segments with chapter metadata.
+
+    Returns a flat list of chunks, each with ``text``, ``chapter_title``,
+    ``is_chapter_start``, and ``char_start``. The UI can use this to
+    show a segment tree before synthesis.
+    """
+    from russian_tts_studio.text import chunk_document
+
+    chunks = chunk_document(text, max_chars=max_chars, max_sentences=max_sentences)
+    return JSONResponse({
+        "chunks": [
+            {
+                "text": c.text,
+                "chapter_title": c.chapter_title,
+                "is_chapter_start": c.is_chapter_start,
+                "char_start": c.char_start,
+            }
+            for c in chunks
+        ],
+        "total_chunks": len(chunks),
+    })
+
+
+# ---------------------------------------------------------------------------
+# Routes — normalization dictionaries (Phase 5)
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/normalization")
+async def list_dictionaries_endpoint() -> JSONResponse:
+    """List all normalization dictionaries."""
+    from russian_tts_studio.text.normalization import list_dictionaries
+
+    dicts = list_dictionaries()
+    return JSONResponse({"dictionaries": dicts})
+
+
+@app.get("/api/normalization/{dict_id}")
+async def get_dictionary_endpoint(dict_id: str) -> JSONResponse:
+    """Load a dictionary with all its entries."""
+    from russian_tts_studio.text.normalization import get_dictionary
+
+    d = get_dictionary(dict_id)
+    if d is None:
+        raise HTTPException(status_code=404, detail=f"Dictionary not found: {dict_id}")
+    return JSONResponse(d)
+
+
+@app.post("/api/normalization")
+async def create_dictionary_endpoint(
+    id: str = Form(...),
+    name: str = Form(...),
+    description: str = Form(""),
+) -> JSONResponse:
+    """Create a new empty dictionary."""
+    from russian_tts_studio.text.normalization import create_dictionary
+
+    try:
+        d = create_dictionary(id, name, description)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return JSONResponse(d, status_code=201)
+
+
+@app.delete("/api/normalization/{dict_id}")
+async def delete_dictionary_endpoint(dict_id: str) -> JSONResponse:
+    """Delete a dictionary and all its entries."""
+    from russian_tts_studio.text.normalization import delete_dictionary
+
+    if delete_dictionary(dict_id):
+        return JSONResponse({"deleted": dict_id})
+    raise HTTPException(status_code=404, detail=f"Dictionary not found: {dict_id}")
+
+
+@app.post("/api/normalization/{dict_id}/entries")
+async def add_entry_endpoint(
+    dict_id: str,
+    source: str = Form(...),
+    replacement: str = Form(...),
+) -> JSONResponse:
+    """Add an entry to a dictionary."""
+    from russian_tts_studio.text.normalization import add_entry
+
+    try:
+        entry_id = add_entry(dict_id, source, replacement)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return JSONResponse({"id": entry_id, "source": source, "replacement": replacement}, status_code=201)
+
+
+@app.put("/api/normalization/entries/{entry_id}")
+async def update_entry_endpoint(
+    entry_id: int,
+    source: str | None = Form(None),
+    replacement: str | None = Form(None),
+    enabled: bool | None = Form(None),
+) -> JSONResponse:
+    """Update an entry (source, replacement, or enabled state)."""
+    from russian_tts_studio.text.normalization import update_entry
+
+    update_entry(entry_id, source=source, replacement=replacement, enabled=enabled)
+    return JSONResponse({"updated": entry_id})
+
+
+@app.delete("/api/normalization/entries/{entry_id}")
+async def delete_entry_endpoint(entry_id: int) -> JSONResponse:
+    """Delete an entry."""
+    from russian_tts_studio.text.normalization import delete_entry
+
+    if delete_entry(entry_id):
+        return JSONResponse({"deleted": entry_id})
+    raise HTTPException(status_code=404, detail=f"Entry not found: {entry_id}")
+
+
+@app.get("/api/normalization/{dict_id}/export")
+async def export_dictionary_endpoint(dict_id: str) -> JSONResponse:
+    """Export a dictionary as JSON."""
+    from russian_tts_studio.text.normalization import export_dictionary_json
+
+    json_str = export_dictionary_json(dict_id)
+    return JSONResponse(json.loads(json_str))
+
+
+@app.post("/api/normalization/{dict_id}/import")
+async def import_dictionary_endpoint(
+    dict_id: str,
+    data: str = Form(...),
+) -> JSONResponse:
+    """Import entries from JSON."""
+    from russian_tts_studio.text.normalization import import_dictionary_json
+
+    count = import_dictionary_json(dict_id, data)
+    return JSONResponse({"imported": count})
+
+
+@app.post("/api/normalization/preview")
+async def normalization_preview_endpoint(
+    text: str = Form(...),
+    use_abbreviations: bool = Form(True),
+    use_addresses: bool = Form(True),
+    use_custom_dicts: bool = Form(True),
+    normalize_numbers: bool = Form(True),
+    normalize_ordinals: bool = Form(True),
+    normalize_dates: bool = Form(True),
+    normalize_currencies: bool = Form(True),
+    normalize_percentages: bool = Form(True),
+    normalize_measurements: bool = Form(True),
+) -> JSONResponse:
+    """Preview normalization diff without modifying anything."""
+    from russian_tts_studio.text.normalization import (
+        NormalizationConfig, get_normalization_diff,
+    )
+
+    cfg = NormalizationConfig(
+        use_abbreviations=use_abbreviations,
+        use_addresses=use_addresses,
+        use_custom_dicts=use_custom_dicts,
+        normalize_numbers=normalize_numbers,
+        normalize_ordinals=normalize_ordinals,
+        normalize_dates=normalize_dates,
+        normalize_currencies=normalize_currencies,
+        normalize_percentages=normalize_percentages,
+        normalize_measurements=normalize_measurements,
+    )
+    diff = get_normalization_diff(text, cfg)
+    return JSONResponse(diff)
+
+
+# ---------------------------------------------------------------------------
+# Routes — settings (unified config)
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/settings")
+async def get_settings() -> JSONResponse:
+    """Get all settings."""
+    from russian_tts_studio.settings import settings
+
+    return JSONResponse(settings.to_dict())
+
+
+@app.put("/api/settings")
+async def update_settings(data: dict) -> JSONResponse:
+    """Update settings (partial update, deep merge)."""
+    from russian_tts_studio.settings import settings
+
+    settings.update(data)
+    settings.save()
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/settings/reset")
+async def reset_settings(key: str | None = None) -> JSONResponse:
+    """Reset a key or all settings to defaults."""
+    from russian_tts_studio.settings import settings
+
+    settings.reset(key)
+    settings.save()
+    return JSONResponse({"ok": True, "reset": key or "all"})
+
+
+# ---------------------------------------------------------------------------
+# Routes — projects (Phase 3: SQLite persistence)
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/projects")
+async def list_projects_endpoint() -> JSONResponse:
+    """List all projects with summary info."""
+    from russian_tts_studio.projects import list_projects
+
+    projects = list_projects()
+    return JSONResponse({"projects": [p.summary() for p in projects]})
+
+
+@app.post("/api/projects")
+async def create_project_endpoint(
+    name: str = Form(...),
+    source_text: str = Form(...),
+    max_chars: int = Form(200),
+    max_sentences: int = Form(4),
+) -> JSONResponse:
+    """Create a new project from source text.
+
+    Detects chapters, chunks the text, and inserts segments into SQLite.
+    Audio is NOT synthesised — use ``POST /api/projects/{id}/segments/{seg}/regenerate``
+    or ``POST /api/projects/{id}/synthesize-all`` afterwards.
+    """
+    from russian_tts_studio.projects import create_project
+
+    if not source_text.strip():
+        raise HTTPException(status_code=400, detail="source_text cannot be empty")
+
+    try:
+        project = create_project(
+            name=name,
+            source_text=source_text,
+            max_chars=max_chars,
+            max_sentences=max_sentences,
+        )
+    except Exception as e:
+        logger.exception("Failed to create project: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+    return JSONResponse(project.to_dict(), status_code=201)
+
+
+@app.get("/api/projects/{project_id}")
+async def get_project_endpoint(project_id: str) -> JSONResponse:
+    """Load a full project with chapters and segments."""
+    from russian_tts_studio.projects import get_project_or_404
+
+    try:
+        project = get_project_or_404(project_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
+    return JSONResponse(project.to_dict())
+
+
+@app.delete("/api/projects/{project_id}")
+async def delete_project_endpoint(project_id: str) -> JSONResponse:
+    """Delete a project and its audio files."""
+    from russian_tts_studio.projects import delete_project_files, get_project_or_404
+    from russian_tts_studio.projects.store import delete_project as _store_delete
+
+    try:
+        get_project_or_404(project_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
+    delete_project_files(project_id)
+    _store_delete(project_id)
+    return JSONResponse({"deleted": project_id})
+
+
+@app.get("/api/projects/{project_id}/segments")
+async def list_segments_endpoint(project_id: str) -> JSONResponse:
+    """List all segments for a project."""
+    from russian_tts_studio.projects import get_project_or_404
+
+    try:
+        project = get_project_or_404(project_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
+    return JSONResponse({
+        "project_id": project_id,
+        "segments": [
+            {
+                "id": s.id,
+                "idx": s.idx,
+                "chapter_title": s.chapter_title,
+                "text": s.text,
+                "status": s.status,
+                "audio_path": s.audio_path,
+                "duration_sec": s.duration_sec,
+                "rtf": s.rtf,
+                "metrics_json": s.metrics_json,
+                "error_message": s.error_message,
+            }
+            for s in project.segments
+        ],
+    })
+
+
+@app.post("/api/projects/{project_id}/segments/{segment_id}/approve")
+async def approve_segment_endpoint(project_id: str, segment_id: str) -> JSONResponse:
+    """Mark a segment as approved."""
+    from russian_tts_studio.projects import approve_segment
+
+    try:
+        seg = approve_segment(project_id, segment_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
+    return JSONResponse({"id": seg.id, "status": seg.status})
+
+
+@app.post("/api/projects/{project_id}/segments/{segment_id}/discard")
+async def discard_segment_endpoint(project_id: str, segment_id: str) -> JSONResponse:
+    """Mark a segment as needs_retry (will be re-queued)."""
+    from russian_tts_studio.projects import discard_segment
+
+    try:
+        seg = discard_segment(project_id, segment_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
+    return JSONResponse({"id": seg.id, "status": seg.status})
+
+
+@app.post("/api/projects/{project_id}/segments/{segment_id}/regenerate")
+async def regenerate_segment_endpoint(
+    project_id: str,
+    segment_id: str,
+    speed: float = Form(0.9),
+    instruct: str | None = Form(None),
+    reference_path: str | None = Form(None),
+) -> JSONResponse:
+    """Re-synthesise a single segment with optional config overrides.
+
+    The segment's status is set to ``pending`` while synthesising, then
+    ``approved`` on success or ``error`` on failure.
+    """
+    from russian_tts_studio.projects import (
+        get_project_or_404,
+        record_synthesis,
+        update_config,
+        mark_error,
+    )
+    from russian_tts_studio.projects.store import update_segment_status
+
+    try:
+        project = get_project_or_404(project_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
+    seg = next((s for s in project.segments if s.id == segment_id), None)
+    if seg is None:
+        raise HTTPException(status_code=404, detail=f"Segment not found: {segment_id}")
+
+    # Update config with new overrides.
+    config = json.loads(seg.config_json) if seg.config_json else {}
+    if speed != 0.9:
+        config["speed"] = speed
+    if instruct:
+        config["instruct"] = instruct
+    if reference_path:
+        config["reference_path"] = reference_path
+    update_config(project_id, segment_id, config)
+
+    # Mark as pending during synthesis.
+    update_segment_status(segment_id, status="pending")
+
+    # Synthesize.
+    pipeline = _State.get_pipeline()
+    audio_dir = Path("output") / "projects" / project_id / "audio"
+    audio_dir.mkdir(parents=True, exist_ok=True)
+    seg_out = audio_dir / f"seg_{seg.idx:03d}.wav"
+
+    ref_path = config.get("reference_path") or reference_path
+    ref_audio = Path(ref_path) if ref_path and Path(ref_path).exists() else None
+
+    try:
+        result = pipeline.synthesize(
+            text=seg.text,
+            reference_audio=ref_audio,
+            instruct=config.get("instruct"),
+            output_path=seg_out,
+            speed=config.get("speed", speed),
+        )
+        final = result["final_path"]
+        metrics = result["metrics"].to_dict() if result["metrics"] else {}
+
+        seg = record_synthesis(
+            project_id, segment_id,
+            audio_path=str(final),
+            wav_path=str(final),
+            duration_sec=result["result"].duration_sec,
+            rtf=result["result"].rtf,
+            metrics=metrics,
+            status="approved",
+        )
+        return JSONResponse({
+            "id": seg.id,
+            "status": seg.status,
+            "audio_url": f"/api/audio/{Path(final).name}",
+            "duration_sec": round(result["result"].duration_sec, 3),
+        })
+    except Exception as e:
+        logger.exception("Segment regeneration failed: %s", e)
+        seg = mark_error(project_id, segment_id, str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.post("/api/projects/{project_id}/rebuild")
+async def rebuild_endpoint(project_id: str) -> JSONResponse:
+    """Concatenate all approved segments into a single audio file."""
+    from russian_tts_studio.projects import rebuild_audiobook
+
+    try:
+        out_path = rebuild_audiobook(project_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        logger.exception("Rebuild failed: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+    return JSONResponse({
+        "audio_url": f"/api/audio/{out_path.name}",
+        "audio_path": str(out_path),
+    })
+
+
+@app.post("/api/projects/{project_id}/synthesize-all")
+async def synthesize_all_endpoint(project_id: str) -> JSONResponse:
+    """Synthesise all pending segments in a project.
+
+    This is a long-running endpoint — it blocks until all segments are
+    done. For interactive use, the WebSocket ``/ws/synthesize`` is
+    preferred; this endpoint is for batch generation.
+    """
+    from russian_tts_studio.projects import get_project_or_404, record_synthesis, mark_error
+    from russian_tts_studio.projects.store import update_segment_status
+
+    try:
+        project = get_project_or_404(project_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
+    pipeline = _State.get_pipeline()
+    pending = [s for s in project.segments if s.status in ("pending", "needs_retry")]
+    audio_dir = Path("output") / "projects" / project_id / "audio"
+    audio_dir.mkdir(parents=True, exist_ok=True)
+
+    results: list[dict] = []
+    for seg in pending:
+        update_segment_status(seg.id, status="pending")
+        seg_out = audio_dir / f"seg_{seg.idx:03d}.wav"
+        config = json.loads(seg.config_json) if seg.config_json else {}
+        ref_path = config.get("reference_path")
+        ref_audio = Path(ref_path) if ref_path and Path(ref_path).exists() else None
+
+        try:
+            result = pipeline.synthesize(
+                text=seg.text,
+                reference_audio=ref_audio,
+                instruct=config.get("instruct"),
+                output_path=seg_out,
+                speed=config.get("speed", 0.9),
+            )
+            final = result["final_path"]
+            metrics = result["metrics"].to_dict() if result["metrics"] else {}
+            record_synthesis(
+                project_id, seg.id,
+                audio_path=str(final),
+                wav_path=str(final),
+                duration_sec=result["result"].duration_sec,
+                rtf=result["result"].rtf,
+                metrics=metrics,
+                status="approved",
+            )
+            results.append({"segment_id": seg.id, "status": "approved"})
+        except Exception as e:
+            logger.exception("Segment %s synthesis failed: %s", seg.id, e)
+            mark_error(project_id, seg.id, str(e))
+            results.append({"segment_id": seg.id, "status": "error", "error": str(e)})
+
+    return JSONResponse({
+        "project_id": project_id,
+        "processed": len(results),
+        "results": results,
+    })
+
+
+# ---------------------------------------------------------------------------
+# Routes — audio mix + music library (Phase 4)
+# ---------------------------------------------------------------------------
+
+MUSIC_DIR = PROJECT_ROOT / "music" / "background"
+MUSIC_DIR.mkdir(parents=True, exist_ok=True)
+
+
+@app.get("/api/music")
+async def list_music() -> JSONResponse:
+    """List available background music files."""
+    from russian_tts_studio.audio import list_background_music
+
+    items = list_background_music(MUSIC_DIR)
+    return JSONResponse({"music": items, "dir": str(MUSIC_DIR)})
+
+
+@app.post("/api/music/upload")
+async def upload_music(file: UploadFile = File(...)) -> JSONResponse:
+    """Upload a music file to the background music library."""
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No filename")
+    ext = Path(file.filename).suffix.lower()
+    if ext not in (".mp3", ".wav", ".flac", ".ogg", ".m4a"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported format: {ext}. Allowed: .mp3, .wav, .flac, .ogg, .m4a",
+        )
+    safe_name = "".join(c if c.isalnum() or c in "-_." else "_" for c in file.filename)
+    dest = MUSIC_DIR / safe_name
+    with open(dest, "wb") as out:
+        shutil.copyfileobj(file.file, out)
+    return JSONResponse({"name": dest.name, "path": str(dest)})
+
+
+@app.delete("/api/music/{filename}")
+async def delete_music(filename: str) -> JSONResponse:
+    """Remove a music file from the library."""
+    if ".." in filename or "/" in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    target = MUSIC_DIR / filename
+    if not target.exists():
+        raise HTTPException(status_code=404, detail="Music not found")
+    target.unlink()
+    return JSONResponse({"deleted": filename})
+
+
+@app.post("/api/mix")
+async def mix_endpoint(
+    narration_path: str = Form(...),
+    music_path: str = Form(...),
+    voice_db: float = Form(0.0),
+    music_db: float = Form(-12.0),
+    intro_sec: float = Form(0.0),
+    tail_sec: float = Form(0.0),
+    fade_in: float = Form(2.0),
+    fade_out: float = Form(3.0),
+    ducking: bool = Form(True),
+    duck_depth_db: float = Form(9.0),
+    loudnorm: bool = True,
+    target_lufs: float = Form(-16.0),
+    output_format: str = Form("mp3"),
+) -> JSONResponse:
+    """Mix narration with background music.
+
+    Returns the path to the mixed output file. The narration and music
+    files must already exist (uploaded or generated by synthesis).
+    """
+    from russian_tts_studio.audio import MixConfig, mix_podcast
+
+    # Resolve narration path — check common directories.
+    narr_path = Path(narration_path)
+    if not narr_path.is_absolute():
+        for base in (SAMPLES_DIR, UPLOAD_DIR, REFERENCES_DIR, Path("output") / "projects"):
+            candidate = base / narr_path.name
+            if candidate.exists():
+                narr_path = candidate
+                break
+
+    music_p = Path(music_path)
+    if not music_p.is_absolute():
+        # Check music library and common directories.
+        for base in (MUSIC_DIR, Path("music"), SAMPLES_DIR, UPLOAD_DIR):
+            candidate = base / music_p.name
+            if candidate.exists():
+                music_p = candidate
+                break
+
+    if not narr_path.exists():
+        raise HTTPException(status_code=404, detail=f"Narration not found: {narration_path}")
+    if not music_p.exists():
+        raise HTTPException(status_code=404, detail=f"Music not found: {music_path}")
+
+    cfg = MixConfig(
+        voice_db=voice_db,
+        music_db=music_db,
+        intro_sec=intro_sec,
+        tail_sec=tail_sec,
+        fade_in=fade_in,
+        fade_out=fade_out,
+        ducking=ducking,
+        duck_depth_db=duck_depth_db,
+        loudnorm=loudnorm,
+        target_lufs=target_lufs,
+        output_format=output_format,
+    )
+
+    try:
+        out = mix_podcast(narr_path, music_p, config=cfg)
+    except Exception as e:
+        logger.exception("Mix failed: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+    return JSONResponse({
+        "audio_url": f"/api/audio/{out.name}",
+        "audio_path": str(out),
+    })
+
+
+@app.get("/api/subtitles/preview")
+async def subtitles_preview(
+    text: str,
+    duration_sec: float = 5.0,
+    max_duration: float = 5.0,
+) -> JSONResponse:
+    """Preview subtitle cues from text (without real timestamps).
+
+    Generates word timestamps by distributing words evenly across the
+    given duration. Useful for UI preview before actual synthesis.
+    """
+    from russian_tts_studio.audio.subtitles import WordTimestamp, _group_cues
+
+    words = text.split()
+    if not words:
+        return JSONResponse({"cues": [], "total_words": 0})
+
+    interval = duration_sec / len(words)
+    timestamps = [
+        WordTimestamp(word=w, start=i * interval, end=(i + 1) * interval)
+        for i, w in enumerate(words)
+    ]
+    cues = _group_cues(timestamps, max_duration=max_duration)
+    return JSONResponse({
+        "cues": [
+            {"text": c.text, "start": round(c.start, 3), "end": round(c.end, 3)}
+            for c in cues
+        ],
+        "total_words": len(words),
+    })
+
+
+# ---------------------------------------------------------------------------
+# Routes — MCP (Model Context Protocol)
+# ---------------------------------------------------------------------------
+
+
+@app.post("/mcp")
+async def mcp_endpoint(request: dict) -> JSONResponse:
+    """MCP JSON-RPC endpoint.
+
+    Accepts JSON-RPC requests and returns JSON-RPC responses.
+    Compatible with MCP protocol version 2024-11-05.
+    """
+    from russian_tts_studio.mcp import handle_mcp_request
+
+    response = handle_mcp_request(request)
+    if not response:
+        return JSONResponse({}, status_code=202)
+    return JSONResponse(response)
+
+
+@app.get("/mcp/config")
+async def mcp_config_endpoint() -> JSONResponse:
+    """Generate MCP configuration for Claude Desktop and Codex."""
+    from russian_tts_studio.mcp import generate_config
+
+    config = generate_config()
+    return JSONResponse(config)
 
 
 # ---------------------------------------------------------------------------
 # Routes — synthesis
 # ---------------------------------------------------------------------------
+
+
+@app.post("/api/markup/parse")
+async def markup_parse(text: str = Form(...)) -> JSONResponse:
+    """Parse ``{{...}}`` markup without synthesising.
+
+    Returns the segment list, chapters, and warnings so the UI can
+    preview the structure before committing to a (slow) generation.
+    """
+    from russian_tts_studio.markup import parse as parse_markup
+
+    doc = parse_markup(text)
+    return JSONResponse({
+        "has_markup": doc.has_markup,
+        "segments": [
+            {
+                "text": s.text,
+                "speed": s.state.speed,
+                "volume": {
+                    "gain_db": s.state.volume.gain_db,
+                    "multiplier": s.state.volume.multiplier,
+                    "normalize_lufs": s.state.volume.normalize_lufs,
+                } if s.state.volume.is_enabled() else None,
+                "chapter": s.state.chapter,
+                "pause_after_ms": s.pause_after.sample_ms() if s.pause_after and s.pause_after.is_enabled() else None,
+                "pause_random": s.pause_after.random if s.pause_after else False,
+                "aliases": [{"target": a.target, "replacement": a.replacement} for a in s.state.aliases],
+                "stresses": [
+                    {"target": st.target, "stressed": st.stressed, "hint_vowel": st.hint_vowel}
+                    for st in s.state.stresses
+                ],
+                "active_span": (
+                    {
+                        "name": s.state.active_span.name,
+                        "token": s.state.active_span.token,
+                        "label": s.state.active_span.label,
+                    }
+                    if s.state.active_span else None
+                ),
+                "source_start": s.source_start,
+            }
+            for s in doc.segments
+        ],
+        "chapters": [{"title": c.title, "source_offset": c.source_offset} for c in doc.chapters],
+        "warnings": doc.warnings,
+    })
 
 
 @app.post("/api/synthesize")
@@ -393,8 +1127,14 @@ async def synthesize(
     speed: float = Form(0.9),
     enable_fallback: bool = Form(True),
     enable_postprocess: bool = Form(True),
+    enable_clamp: bool = Form(True),
     enable_quality_check: bool = Form(True),
-    engine: str = Form("xtts"),
+    engine: str = Form("voxcpm"),
+    # Markup: when True, parse ``{{...}}`` commands in the text and
+    # synthesise segment-by-segment (Phase 1 LTV-inspired markup).
+    # Off by default — without markup the endpoint behaves exactly as
+    # before.
+    enable_markup: bool = Form(False),
     # VoxCPM-only prosody: per-punctuation silence durations in ms.
     # ``enable_prosody`` is a master switch (off by default). Each
     # ``pause_ms_*`` is read by ``utils.prosody.PauseConfig.from_metadata``.
@@ -406,6 +1146,7 @@ async def synthesize(
     pause_ms_exclamation: int = Form(0),
     pause_ms_question: int = Form(0),
     pause_ms_ellipsis: int = Form(0),
+    pause_ms_word_gap: int = Form(0),
 ) -> JSONResponse:
     """Synthesize text using uploaded reference audio (or Silero fallback)."""
     if not text.strip():
@@ -414,39 +1155,18 @@ async def synthesize(
         raise HTTPException(status_code=400, detail="Text too long (max 2000 chars)")
 
     # Normalise the engine string.
-    #   - "xtts-v2"/"xtts_v2"/"xttsv2" → "xtts"
-    #   - "voxcpm-2"/"voxcpm2"           → "voxcpm"
-    # The pipeline supports "xtts" and "voxcpm"; anything else is 400.
-    engine_norm = (engine or "xtts").strip().lower()
-    if engine_norm in ("xtts-v2", "xtts_v2", "xttsv2"):
-        engine_norm = "xtts"
-    elif engine_norm in ("voxcpm-2", "voxcpm2", "voxcpm_v2"):
+    #   voxcpm / voxcpm-2 / voxcpm2 / voxcpm_v2  → "voxcpm"
+    #   higgs / higgs-v2 / higgs-v2.5            → "higgs"
+    engine_norm = (engine or "voxcpm").strip().lower()
+    if engine_norm in ("voxcpm-2", "voxcpm2", "voxcpm_v2"):
         engine_norm = "voxcpm"
-    if engine_norm not in ("xtts", "voxcpm"):
+    if engine_norm in ("higgs-v2", "higgs-v2.5", "higgs-v2-3b", "higgs-audio", "higgs2"):
+        engine_norm = "higgs"
+    if engine_norm not in ("voxcpm", "higgs"):
         raise HTTPException(
             status_code=400,
-            detail=f"Unknown engine {engine!r}; expected 'xtts' or 'voxcpm'",
+            detail=f"Unknown engine {engine!r}; expected 'voxcpm' or 'higgs'",
         )
-
-    # If the user picked an engine whose dependencies live in a different
-    # venv (XTTS in .venv, VoxCPM2 in .venv-voxcpm — torch versions don't
-    # coexist), transparently re-exec the worker into the right interpreter.
-    # The execv replaces the current process, so the request never completes
-    # in the wrong interpreter; the browser/curl retries against the new one.
-    if engine_norm in ("xtts", "voxcpm"):
-        # uvicorn --reload spawns a watcher that doesn't tolerate the worker
-        # process replacing its binary under it. In that case, refuse and
-        # tell the user how to start the right way.
-        if "--reload" in sys.argv:
-            raise HTTPException(
-                status_code=503,
-                detail=(
-                    f"Движок {engine_norm!r} требует запуск из нужного venv. "
-                    "Перезапустите сервер без --reload, например: "
-                    ".venv/bin/python -m web.run --no-reload --port 8129"
-                ),
-            )
-        _reexec_for_engine(engine_norm)
 
     ref_path: Path | None = None
     if reference is not None:
@@ -480,6 +1200,7 @@ async def synthesize(
         enable_fallback=enable_fallback,
         enable_postprocess=enable_postprocess,
         enable_quality_check=enable_quality_check,
+        enable_clamp=enable_clamp,
     )
     pipeline = _State.get_pipeline(engine=engine_norm)
     pipeline.config = config
@@ -495,7 +1216,8 @@ async def synthesize(
 
     # Build the prosody metadata dict. Only constructed when explicitly
     # enabled AND a VoxCPM engine is selected — prosody is a no-op for
-    # XTTS/Silero. ``enable_prosody=False`` (the default) means
+    # VoxCPM2. Silero has no prosody support. ``enable_prosody=False``
+    # (the default) means
     # ``prosody_meta = {}`` and the pipeline sees no pause overrides.
     prosody_meta: dict = {}
     if enable_prosody and engine_norm == "voxcpm":
@@ -507,6 +1229,7 @@ async def synthesize(
             "exclamation": pause_ms_exclamation,
             "question": pause_ms_question,
             "ellipsis": pause_ms_ellipsis,
+            "word_gap": pause_ms_word_gap,
         }
         # Clamp to [0, 5000] ms (5 s — sanity limit) and drop 0s to
         # keep the dict small and the log line readable.
@@ -521,6 +1244,45 @@ async def synthesize(
         )
 
     try:
+        if enable_markup and "{{" in text:
+            # Markup path: parse ``{{...}}`` and synthesise per segment.
+            from russian_tts_studio.markup import parse as parse_markup
+
+            doc = parse_markup(text)
+            logger.info(
+                "[req %s] markup enabled: %d segments, %d chapters, %d warnings",
+                request_id, len(doc.segments), len(doc.chapters), len(doc.warnings),
+            )
+            out_name = f"markup_{request_id}.wav"
+            out_path = SAMPLES_DIR / out_name
+            result = pipeline.synthesize_markup(
+                doc=doc,
+                reference_audio=ref_path,
+                reference_text=ref_text_resolved,
+                instruct=instruct,
+                output_path=out_path,
+                speaker_fallback=speaker_fallback,
+                quality_check=enable_quality_check,
+                base_speed=speed,
+                prosody=prosody_meta or None,
+            )
+            final_path = result["final_path"]
+            audio_url = f"/api/audio/{Path(final_path).name}"
+            return JSONResponse({
+                "request_id": request_id,
+                "audio_url": audio_url,
+                "audio_path": str(final_path),
+                "markup": {
+                    "segments": len(doc.segments),
+                    "chapters": result["chapters"],
+                    "warnings": result["warnings"],
+                },
+                "segment_results": [
+                    {"outcome": r.get("outcome", "error").value if hasattr(r.get("outcome"), "value") else r.get("outcome", "error")}
+                    for r in result["segments"]
+                ],
+            })
+
         result = pipeline.synthesize(
             text=text,
             reference_audio=ref_path,
@@ -545,12 +1307,12 @@ async def synthesize(
     res = result["result"]
     metrics_dict = result["metrics"].to_dict() if result["metrics"] else {}
 
-    # ``final_path`` is built by the engine wrapper (XTTS / Silero) as a
-    # *relative* path like "output/samples/...wav". We need an absolute
-    # path to compare against PROJECT_ROOT, otherwise ``Path.relative_to``
-    # raises ValueError ("'foo' is not in the subpath of '/abs/path'").
-    # Make it absolute relative to PROJECT_ROOT first, then compute the
-    # relative form safely.
+    # ``final_path`` is built by the engine wrapper (VoxCPM2 / Silero)
+    # as a *relative* path like "output/samples/...wav". We need an
+    # absolute path to compare against PROJECT_ROOT, otherwise
+    # ``Path.relative_to`` raises ValueError ("'foo' is not in the
+    # subpath of '/abs/path'"). Make it absolute relative to
+    # PROJECT_ROOT first, then compute the relative form safely.
     final_path_abs = final_path if final_path.is_absolute() else (PROJECT_ROOT / final_path)
     try:
         audio_path_rel = str(final_path_abs.relative_to(PROJECT_ROOT))
@@ -651,6 +1413,54 @@ async def delete_reference(filename: str) -> JSONResponse:
         raise HTTPException(status_code=404, detail="Reference not found")
     target.unlink()
     return JSONResponse({"deleted": filename})
+
+
+# ---------------------------------------------------------------------------
+# Routes — voice profiles (text-described voices via YAML)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/voice-profiles")
+async def list_voice_profiles() -> JSONResponse:
+    """List all voice profiles from ``output/reference/profiles.yaml``.
+
+    Voice profiles are text-described voices (``profile:<name>``
+    syntax, inspired by Higgs Audio). Engines that support them
+    (Higgs) render the description directly; engines that don't
+    (VoxCPM2) fall back to their default voice.
+    """
+    from russian_tts_studio.models.voice_profiles import list_profiles
+    profiles = list_profiles()
+    return JSONResponse({
+        "profiles": [
+            {"name": p.name, "description": p.description}
+            for p in profiles
+        ],
+        "path": str(__import__("russian_tts_studio.models.voice_profiles", fromlist=["DEFAULT_PROFILES_PATH"]).DEFAULT_PROFILES_PATH),
+    })
+
+
+@app.post("/api/voice-profiles")
+async def add_voice_profile(
+    name: str = Form(...),
+    description: str = Form(...),
+) -> JSONResponse:
+    """Add or update a voice profile. Persists to ``profiles.yaml``."""
+    from russian_tts_studio.models.voice_profiles import add_profile, get_profile
+    name = name.strip()
+    description = description.strip()
+    if not name or not description:
+        raise HTTPException(status_code=400, detail="name and description required")
+    add_profile(name, description)
+    return JSONResponse({"name": name, "description": description})
+
+
+@app.delete("/api/voice-profiles/{name}")
+async def delete_voice_profile(name: str) -> JSONResponse:
+    """Delete a voice profile from ``profiles.yaml``."""
+    from russian_tts_studio.models.voice_profiles import delete_profile
+    if delete_profile(name):
+        return JSONResponse({"deleted": name})
+    raise HTTPException(status_code=404, detail="Profile not found")
 
 
 # ---------------------------------------------------------------------------
@@ -864,6 +1674,7 @@ async def comfyui_export_speaker(
 async def status() -> JSONResponse:
     """Full pipeline + environment status."""
     import torch  # noqa: PLC0415  - cheap reimport (already loaded transitively)
+    _State.last_heartbeat = time.time()
     return JSONResponse({
         "device": (
             "cuda" if torch.cuda.is_available()
@@ -875,6 +1686,14 @@ async def status() -> JSONResponse:
         "transcriber_loaded": _State.transcriber is not None and _State.transcriber._loaded,
         "comfyui": _State.get_comfyui_config() is not None,
     })
+
+
+@app.post("/api/heartbeat")
+async def heartbeat() -> JSONResponse:
+    """Ping from the browser UI. Used in --browser mode to auto-shutdown
+    the server when the user closes the tab/window."""
+    _State.last_heartbeat = time.time()
+    return JSONResponse({"ok": True})
 
 
 @app.post("/api/postprocess")
@@ -936,6 +1755,59 @@ async def ws_synthesize(ws: WebSocket) -> None:
                     break
 
         pipeline = _State.get_pipeline()
+
+        # Markup path: if the text contains ``{{...}}`` commands, parse
+        # and synthesise segment-by-segment via ``synthesize_markup``.
+        # This streams per-segment progress with chapter info.
+        if "{{" in text:
+            from russian_tts_studio.markup import parse as parse_markup
+
+            doc = parse_markup(text)
+            non_empty = [s for s in doc.segments if s.text.strip()]
+            await ws.send_json({
+                "type": "started",
+                "total_chunks": len(non_empty),
+                "chapters": [{"title": c.title, "source_offset": c.source_offset} for c in doc.chapters],
+                "warnings": doc.warnings,
+                "mode": "markup",
+            })
+
+            out_name = f"markup_ws_{int(time.time() * 1000)}.wav"
+            out_path = SAMPLES_DIR / out_name
+
+            progress_state = {"idx": 0}
+
+            def _on_progress(idx: int, total: int, segment) -> None:
+                progress_state["idx"] = idx
+
+            # We can't easily make synthesize_markup async-send to the ws
+            # from a sync method, so we poll: run synthesize_markup in a
+            # thread and send progress events as idx advances. For Phase 1
+            # simplicity, we run it synchronously and send a single done
+            # event — the per-segment progress is available via the
+            # returned ``segments`` list. A future iteration can make
+            # this truly streaming.
+            try:
+                result = pipeline.synthesize_markup(
+                    doc=doc,
+                    reference_audio=ref_path,
+                    instruct=data.get("instruct"),
+                    output_path=out_path,
+                    on_progress=_on_progress,
+                )
+                final_path = result["final_path"]
+                await ws.send_json({
+                    "type": "done",
+                    "audio_url": f"/api/audio/{Path(final_path).name}",
+                    "segment_count": len(result["segments"]),
+                    "chapters": result["chapters"],
+                    "warnings": result["warnings"],
+                })
+            except Exception as e:
+                logger.exception("[ws markup] failed: %s", e)
+                await ws.send_json({"type": "error", "message": str(e)})
+            return
+
         chunks: list[str] = []
         if len(text) > 180:
             from russian_tts_studio.utils.text_utils import chunk_text_for_tts
@@ -943,7 +1815,7 @@ async def ws_synthesize(ws: WebSocket) -> None:
         else:
             chunks = [text]
 
-        await ws.send_json({"type": "started", "total_chunks": len(chunks)})
+        await ws.send_json({"type": "started", "total_chunks": len(chunks), "mode": "plain"})
 
         for i, chunk in enumerate(chunks):
             await ws.send_json({"type": "progress", "chunk": i + 1, "total": len(chunks)})

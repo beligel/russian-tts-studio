@@ -62,6 +62,11 @@ def main() -> int:
         action="store_true",
         help="Don't open any UI — just run the server (Ctrl+C to stop).",
     )
+    parser.add_argument(
+        "--no-watchdog",
+        action="store_true",
+        help="Disable the heartbeat watchdog (server stays alive even without UI).",
+    )
     args = parser.parse_args()
 
     # If --force-server, skip the GUI branch entirely
@@ -115,12 +120,15 @@ def main() -> int:
         return desktop_main()
     else:
         logger.info("Mode: system browser (reason: %s)", reason)
-        sys.argv = [
+        desktop_args = [
             sys.argv[0],
             "--host", args.host,
             "--port", str(args.port),
             "--browser",
         ]
+        if args.no_watchdog:
+            desktop_args.append("--no-watchdog")
+        sys.argv = desktop_args
         from web.desktop import main as desktop_main
         return desktop_main()
 

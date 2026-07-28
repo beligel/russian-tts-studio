@@ -8,8 +8,7 @@ This module compensates by post-processing the synthesised audio:
 * locate the time positions of punctuation marks in the wav
 * splice in silence of user-configurable duration at each location
 
-Only VoxCPM2 uses this — XTTS-v2 already has its own (poor) prosody
-sensitivity and the chunking would interfere with its inference.
+Only VoxCPM2 uses this prosody module.
 """
 
 from __future__ import annotations
@@ -31,17 +30,22 @@ logger = logging.getLogger(__name__)
 
 # --- punctuation rules --------------------------------------------------------
 # What we consider a "pause point" and the default duration for each kind.
-# These defaults were chosen as a conservative compromise — long enough
-# to be heard, short enough not to sound robotic.
+# History: the original defaults (period=900, !?=1000) were too long — the gap
+# after a sentence-ending mark sounded like the trailing syllable was cut off
+# and then resumed ("stutter"). They were first shortened to period=600, !?=700
+# and later (after we made ``clamp_long_silences`` aggressively clip anything
+# >300ms down to 0) to period=500, !?=550. The intra-sentence marks scale down
+# proportionally so the relative rhythm (comma < semicolon ≈ colon < period <
+# !? ≈ ellipsis) is preserved.
 
 DEFAULT_PAUSE_MS: dict[str, int] = {
-    "comma": 500,
-    "semicolon": 700,
-    "colon": 700,
-    "period": 900,
-    "exclamation": 1000,
-    "question": 1000,
-    "ellipsis": 1300,
+    "comma": 250,
+    "semicolon": 350,
+    "colon": 350,
+    "period": 500,
+    "exclamation": 550,
+    "question": 550,
+    "ellipsis": 700,
 }
 
 # Mapping char → rule key. Order matters for the ellipsis check (we test
@@ -56,10 +60,19 @@ _PUNCT_RULES: list[tuple[str, str]] = [
     (",", "comma"),
 ]
 
+# Characters that count as punctuation when deciding whether a word boundary
+# already has an explicit pause inserted.
+_PUNCTUATION_CHARS = frozenset(ch for ch, _name in _PUNCT_RULES) | {"…"}
+
 
 @dataclass
 class PauseConfig:
-    """Per-punctuation pause durations in milliseconds. 0 disables that mark."""
+    """Per-punctuation and inter-word pause durations in milliseconds.
+
+    ``word_gap_ms`` controls the silence inserted between plain whitespace-
+    separated words (i.e. word boundaries not already covered by a
+    punctuation pause). 0 disables inter-word gap extension.
+    """
     comma: int = DEFAULT_PAUSE_MS["comma"]
     semicolon: int = DEFAULT_PAUSE_MS["semicolon"]
     colon: int = DEFAULT_PAUSE_MS["colon"]
@@ -67,12 +80,14 @@ class PauseConfig:
     exclamation: int = DEFAULT_PAUSE_MS["exclamation"]
     question: int = DEFAULT_PAUSE_MS["question"]
     ellipsis: int = DEFAULT_PAUSE_MS["ellipsis"]
+    word_gap_ms: int = 0
 
     def is_enabled(self) -> bool:
         return any(
             getattr(self, name) > 0
             for name in ("comma", "semicolon", "colon", "period",
-                         "exclamation", "question", "ellipsis")
+                         "exclamation", "question", "ellipsis",
+                         "word_gap_ms")
         )
 
     def duration_for_char(self, ch: str) -> Optional[int]:
@@ -85,17 +100,56 @@ class PauseConfig:
 
     @classmethod
     def from_metadata(cls, meta: dict) -> "PauseConfig":
-        """Build a PauseConfig from a request.metadata dict (all keys optional)."""
+        """Build a PauseConfig from a request.metadata dict (all keys optional).
+
+        If ``meta`` contains no ``pause_ms_*`` keys at all, the resulting
+        config is disabled (all zeros). This matches the UI semantics where
+        ``enable_prosody=False`` leaves the metadata empty and prosody must
+        not silently fall back to DEFAULT_PAUSE_MS.
+
+        If one or more ``pause_ms_*`` keys are present, unset keys keep their
+        DEFAULT_PAUSE_MS values, so a caller can override just a single mark
+        without spelling out all seven.
+        """
         kwargs: dict = {}
+        has_any = False
         for name in ("comma", "semicolon", "colon", "period",
-                     "exclamation", "question", "ellipsis"):
-            val = meta.get(f"pause_ms_{name}")
-            if val is not None:
+                     "exclamation", "question", "ellipsis", "word_gap"):
+            key = f"pause_ms_{name}"
+            if key in meta:
+                has_any = True
+                val = meta[key]
                 try:
                     kwargs[name] = max(0, int(val))
                 except (TypeError, ValueError):
                     pass
-        return cls(**kwargs)
+
+        if not has_any:
+            # No prosody requested — return a disabled config.
+            return cls(
+                comma=0, semicolon=0, colon=0, period=0,
+                exclamation=0, question=0, ellipsis=0,
+                word_gap_ms=0,
+            )
+
+        # If the only requested key is word_gap, don't fall back to punctuation
+        # defaults — the user asked only for inter-word spacing.
+        only_word_gap = set(kwargs.keys()) == {"word_gap"}
+        return cls(
+            comma=kwargs.get("comma", 0 if only_word_gap else DEFAULT_PAUSE_MS["comma"]),
+            semicolon=kwargs.get("semicolon", 0 if only_word_gap else DEFAULT_PAUSE_MS["semicolon"]),
+            colon=kwargs.get("colon", 0 if only_word_gap else DEFAULT_PAUSE_MS["colon"]),
+            period=kwargs.get("period", 0 if only_word_gap else DEFAULT_PAUSE_MS["period"]),
+            exclamation=kwargs.get("exclamation", 0 if only_word_gap else DEFAULT_PAUSE_MS["exclamation"]),
+            question=kwargs.get("question", 0 if only_word_gap else DEFAULT_PAUSE_MS["question"]),
+            ellipsis=kwargs.get("ellipsis", 0 if only_word_gap else DEFAULT_PAUSE_MS["ellipsis"]),
+            word_gap_ms=kwargs.get("word_gap", 0),
+        )
+
+    @classmethod
+    def defaults(cls) -> "PauseConfig":
+        """Return a PauseConfig pre-filled with DEFAULT_PAUSE_MS values."""
+        return cls()
 
 
 # --- MMS_FA + uroman lazy loader ---------------------------------------------
@@ -410,7 +464,21 @@ def insert_pauses(
             punct_positions.append((i, ms, ch))
         i += 1
 
-    if not punct_positions:
+    # 1a) Locate plain whitespace word boundaries (no punctuation in between)
+    word_gap_positions: list[int] = []
+    if config.word_gap_ms > 0:
+        spans = _char_to_word_mapping(text)
+        for prev, nxt in zip(spans, spans[1:]):
+            prev_end = prev[1]
+            next_start = nxt[0]
+            # If the whitespace between these words contains any punctuation,
+            # the punctuation pause already handles this boundary.
+            between = text[prev_end:next_start]
+            if any(c in _PUNCTUATION_CHARS for c in between):
+                continue
+            word_gap_positions.append(prev_end - 1)
+
+    if not punct_positions and not word_gap_positions:
         return wav_path, False
 
     # 2) Try forced alignment; fall back to proportional on any failure
@@ -427,6 +495,10 @@ def insert_pauses(
                 continue
             _, end_t = char_times[j]
             insert_points.append((end_t, ms))
+        for char_idx in word_gap_positions:
+            if char_idx in char_times:
+                _, end_t = char_times[char_idx]
+                insert_points.append((end_t, config.word_gap_ms))
     except Exception as e:
         logger.warning(
             "insert_pauses: forced aligner unavailable (%s: %s) — "
@@ -435,6 +507,8 @@ def insert_pauses(
         )
         degraded = True
         insert_points = _proportional_punct_timestamps(text, punct_positions, wav_path)
+        # Word gaps are intentionally omitted in proportional fallback —
+        # proportional placement is too coarse to avoid swallowing speech.
 
     if not insert_points:
         return wav_path, degraded
@@ -460,7 +534,32 @@ def insert_pauses(
     if not insert_points:
         return wav_path, degraded
 
-    # Build a new sample array by interleaving segments
+    # Helper: find how much existing silence already follows a given sample
+    # index, so we can *replace* it rather than *append* to it. Without this,
+    # VoxCPM2's own long mid-stream pauses (e.g. ~480 ms after a comma)
+    # would stack on top of the requested pause and sound like stuttering.
+    def _existing_silence_samples(
+        start_sample: int,
+        max_lookahead_ms: float = 2000.0,
+        db_threshold: float = -40.0,
+    ) -> int:
+        if start_sample >= wav.shape[0]:
+            return 0
+        peak = max(np.max(np.abs(wav[start_sample:])), 1e-9)
+        threshold = peak * 10 ** (db_threshold / 20.0)
+        max_samples = int(round(max_lookahead_ms * samples_per_ms))
+        end_limit = min(wav.shape[0], start_sample + max_samples)
+        region = wav[start_sample:end_limit]
+        # Compute per-sample absolute amplitude to catch gaps between words
+        mono = region.mean(axis=1) if region.ndim > 1 else region
+        above = np.abs(mono) >= threshold
+        # The silence run starts at 0; find the first sample above threshold.
+        first_above = np.argmax(above) if above.any() else len(above)
+        return int(first_above)
+
+    # Build a new sample array by interleaving segments. For each punctuation
+    # point we skip the existing silence that follows it and replace it with
+    # the exact requested silence.
     samples_per_ms = sr / 1000.0
     out_segments: list[np.ndarray] = []
     cursor_samples = 0
@@ -468,12 +567,23 @@ def insert_pauses(
         end_samples = int(round(t_sec * sr))
         if end_samples <= cursor_samples:
             continue  # punctuation positions collided after rounding
+
+        # Audio up to the insertion point.
         out_segments.append(wav[cursor_samples:end_samples])
-        silence_samples = int(round(ms * samples_per_ms))
-        silence = np.zeros((silence_samples, channels) if channels > 1
-                           else (silence_samples,), dtype=np.float32)
+
+        # How much silence is already there after this word? Replace it.
+        existing_sil = _existing_silence_samples(end_samples)
+        requested_sil = int(round(ms * samples_per_ms))
+        silence_samples = max(requested_sil, 0)
+        silence = np.zeros(
+            (silence_samples, channels) if channels > 1 else (silence_samples,),
+            dtype=np.float32,
+        )
         out_segments.append(silence)
-        cursor_samples = end_samples
+
+        # Advance cursor past the original silence we just replaced.
+        cursor_samples = end_samples + existing_sil
+
     out_segments.append(wav[cursor_samples:])
 
     new_wav = np.concatenate(out_segments, axis=0)

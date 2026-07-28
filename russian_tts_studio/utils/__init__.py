@@ -1,6 +1,7 @@
 """__init__ for utils package."""
 
 from .audio_utils import (
+    clamp_long_silences,
     concatenate_audios,
     get_duration,
     load_audio,
@@ -26,6 +27,7 @@ from .text_utils import (
 )
 
 __all__ = [
+    "clamp_long_silences",
     "concatenate_audios",
     "get_duration",
     "load_audio",

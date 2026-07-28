@@ -14,6 +14,17 @@ output/comparison/**/*.wav
 output/reports/*.json
 output/reports/*.md
 
+# Test artifacts (created by pytest runs, not source)
+output/test_*/
+output/prosody_e2e/
+output/normalization.db
+output/projects.db
+
+# Voice profiles starter (auto-created on first run from
+# russian_tts_studio/models/voice_profiles.py:_STARTER_PROFILES —
+# users edit their own copy, don't track it)
+output/reference/profiles.yaml
+
 # Models (only at repo root — the russian_tts_studio/models/ subdir is
 # Python source code and MUST be tracked)
 /models/

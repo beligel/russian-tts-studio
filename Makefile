@@ -1,13 +1,15 @@
-.PHONY: help install test run-eval run-compare run-pipeline discover discover-speakers export-speaker synth-with-speaker import-speakers install-plugin web desktop start clean
+.PHONY: help install install-linux uninstall test run-eval run-compare run-pipeline discover discover-speakers export-speaker synth-with-speaker import-speakers install-plugin web desktop start clean
 
 PYTHON ?= python3
 PIP ?= pip3
 
 help:
-	@echo "XTTS pipeline for Russian TTS — make targets:"
+	@echo "Russian TTS pipeline — make targets:"
 	@echo "  install          Install all dependencies"
+	@echo "  install-linux    Install to ~/.local (desktop entry, systemd service)"
+	@echo "  uninstall        Remove Linux installation"
 	@echo "  test             Run unit tests"
-	@echo "  run-compare      Compare Silero and XTTS on Russian phrases"
+	@echo "  run-compare      Compare Silero and VoxCPM2 on Russian phrases"
 	@echo "  run-pipeline     Run production pipeline on a text"
 	@echo "  discover         Discover ComfyUI + plugin installation"
 	@echo "  discover-speakers  List ComfyUI speaker presets"
@@ -20,13 +22,19 @@ help:
 install:
 	$(PIP) install -r requirements.txt
 
+install-linux:
+	bash install.sh --port 8129
+
+uninstall:
+	bash install.sh --uninstall
+
 test:
 	$(PYTHON) -m pytest tests/ -v
 
 run-compare:
 	$(PYTHON) scripts/comparison/compare_engines.py \
 		--reference output/reference/ru_voice.wav \
-		--engines silero,xtts \
+		--engines silero,voxcpm \
 		--output-dir output/comparison
 
 run-pipeline:

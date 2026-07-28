@@ -1,7 +1,7 @@
 [project]
 name = "russian-tts-studio"
 version = "0.1.0"
-description = "Production TTS pipeline for Russian: XTTS-v2 + Silero fallback + ComfyUI integration"
+description = "Production TTS pipeline for Russian: VoxCPM2 + Silero fallback + ComfyUI integration"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }

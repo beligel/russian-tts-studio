@@ -11,9 +11,6 @@ and has three cloning modes of escalating quality:
                     both the reference voice and the *style* of a
                     longer context clip)
 
-The wrapper exposes the same interface as :class:`XTTSSynthesizer` so
-the pipeline can switch engines without changing the call site.
-
 API used here matches ``voxcpm==2.0.3``:
     from voxcpm import VoxCPM
     model = VoxCPM.from_pretrained("OpenBMB/VOXCPM2", load_denoiser=False)
@@ -28,13 +25,9 @@ API used here matches ``voxcpm==2.0.3``:
     # (48 kHz for VoxCPM2). Use soundfile to persist it.
 
 ⚠️ VoxCPM2 weights are distributed under the **Apache-2.0** license,
-which is permissive for commercial use. Note that VoxCPM2 lives in
-its own venv (``.venv-voxcpm``) because it requires ``torch>=2.5``
-while XTTS needs ``torch<=2.4`` — the two cannot coexist in one
-Python environment. The :mod:`russian_tts_studio.models.voxcpm_synth`
-module is therefore imported lazily by :class:`TTSPipeline` and
-**fails fast** if ``voxcpm`` isn't installed (i.e. you started the
-web server from the wrong venv).
+which is permissive for commercial use. Note that VoxCPM2 requires
+``torch>=2.5``; the package install pins the appropriate version in
+``.venv/``.
 
 Stress control: VoxCPM2 has no input mechanism for explicit stress
 marks. The model uses autoprosoody — its TSLM picks stress from
@@ -62,9 +55,6 @@ logger = logging.getLogger(__name__)
 
 class VoxCPMSynthesizer:
     """High-level wrapper around OpenBMB VoxCPM2.
-
-    Mirrors the shape of :class:`XTTSSynthesizer` so it can be swapped
-    in transparently by the pipeline.
 
     Features:
     - Lazy model load (VoxCPM2 + AudioVAE, ~2 GB on first run)
@@ -132,30 +122,23 @@ class VoxCPMSynthesizer:
         if self._loaded:
             return
         # VoxCPM2 needs torch>=2.5 — the SDPA forward pass uses
-        # ``enable_gqa`` (torch 2.5+). The XTTS venv (.venv) ships
-        # torch 2.3.1, so accidentally trying to load VoxCPM2 from
-        # there crashes deep inside the model with a confusing
+        # ``enable_gqa`` (torch 2.5+). Older torch versions crash
+        # deep inside the model with a confusing
         # "got an unexpected keyword argument 'enable_gqa'" instead
-        # of a useful "wrong venv" message. Catch it here.
+        # of a useful "wrong torch version" message. Catch it here.
         torch_major, torch_minor = (int(x) for x in torch.__version__.split(".")[:2])
         if (torch_major, torch_minor) < (2, 5):
             raise RuntimeError(
                 f"VoxCPM2 requires torch>=2.5, but found torch=={torch.__version__}. "
-                "This usually means the web server was started from the XTTS "
-                "venv (.venv) instead of the VoxCPM2 venv (.venv-voxcpm). "
-                "Start the server with:\n"
-                "  source .venv-voxcpm/bin/activate && make start\n"
-                "or run the binary directly: .venv-voxcpm/bin/python -m web.app"
+                "Reinstall the project venv with the pinned torch version:\n"
+                "  pip install -r requirements.txt"
             )
         try:
             from voxcpm import VoxCPM  # type: ignore[import-not-found]
         except ImportError as exc:
             raise RuntimeError(
                 "Cannot import the 'voxcpm' package. Install with:\n"
-                "  pip install voxcpm==2.0.3\n"
-                "VoxCPM2 must run in a dedicated venv (.venv-voxcpm) "
-                "because it requires torch>=2.5 and is incompatible with "
-                "the XTTS venv's torch<=2.4.\n"
+                "  pip install -r requirements.txt\n"
                 f"Underlying error: {exc}"
             )
 
@@ -230,11 +213,11 @@ class VoxCPMSynthesizer:
         #   * zero-shot — no reference at all (VoxCPM2 falls back to
         #     its built-in default voice)
         #
-        # Our pipeline always supplies a reference_audio (XTTS-style
-        # cloning flow), so we use reference_wav_path for cloning.
-        # If reference_text is also provided, we forward it as
-        # prompt_text for the "ultimate" mode — this gives noticeably
-        # cleaner prosody on long Russian sentences.
+        # Our pipeline always supplies a reference_audio, so we use
+        # reference_wav_path for cloning. If reference_text is also
+        # provided, we forward it as prompt_text for the "ultimate"
+        # mode — this gives noticeably cleaner prosody on long
+        # Russian sentences.
         generate_kwargs: dict = {
             "text": request.text,
             "reference_wav_path": str(ref_path),
@@ -280,25 +263,44 @@ class VoxCPMSynthesizer:
             )
             # Optional prosody: splice silence at comma/period/etc.
             # by forced-aligning the wav against the original Cyrillic
-            # text. ``insert_pauses`` is a no-op if all pause_ms_* are
-            # 0; on forced-aligner failure it falls back to proportional
-            # placement and returns ``degraded=True`` so we can surface
-            # that in the response metadata for the UI.
+            # text. Prosody is applied ONLY when the caller explicitly
+            # supplied pause_ms_* values in ``request.metadata``. This
+            # prevents the UI switch ``enable_prosody=False`` from
+            # silently using the conservative defaults. ``insert_pauses``
+            # is a no-op if all pause_ms_* are 0; on forced-aligner
+            # failure it falls back to proportional placement and
+            # returns ``degraded=True`` so we can surface that in the
+            # response metadata for the UI.
+            #
+            # VoxCPM2 tends to generate unnaturally long mid-stream
+            # silences. When prosody is enabled we first clamp those
+            # raw gaps, then insert the user-configured punctuation
+            # silences, so the requested comma/period/... durations are
+            # preserved exactly instead of being flattened by the
+            # pipeline's post-process clamp.
+            # Track whether prosody was actually applied so the UI can
+            # show the right status. ``prosody_applied`` is set when
+            # insert_pauses ran and added silences; ``prosody_degraded``
+            # is set on alignment fallback or any unexpected error.
+            prosody_applied = False
             prosody_degraded = False
             try:
-                pause_cfg = PauseConfig.from_metadata(
-                    request.metadata or {}
-                )
-                if pause_cfg.is_enabled():
-                    _, prosody_degraded = insert_pauses(
-                        output_path, request.text, pause_cfg,
-                    )
+                meta = request.metadata or {}
+                has_pause_keys = any(k.startswith("pause_ms_") for k in meta)
+                if has_pause_keys:
+                    pause_cfg = PauseConfig.from_metadata(meta)
+                    if pause_cfg.is_enabled():
+                        _, prosody_degraded = insert_pauses(
+                            output_path, request.text, pause_cfg,
+                        )
+                        prosody_applied = True
             except Exception as e:
                 logger.warning(
                     "Prosody post-processing skipped: %s: %s",
                     type(e).__name__, e,
                 )
                 prosody_degraded = True
+
             # Re-measure from disk so reported duration matches the
             # post-pause file (insert_pauses may have appended silences).
             try:
@@ -311,7 +313,7 @@ class VoxCPMSynthesizer:
             rtf = gen_time / duration if duration > 0 else 0.0
 
             result_meta = dict(request.metadata or {})
-            if pause_cfg.is_enabled():
+            if prosody_applied:
                 result_meta["prosody_applied"] = True
                 if prosody_degraded:
                     result_meta["prosody_degraded"] = True

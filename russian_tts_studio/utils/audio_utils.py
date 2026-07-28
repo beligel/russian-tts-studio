@@ -234,3 +234,95 @@ def concatenate_audios(
         ], dim=-1)
 
     return result
+
+
+def clamp_long_silences(
+    waveform: torch.Tensor,
+    sample_rate: int,
+    max_gap_ms: int = 450,
+    target_gap_ms: int = 180,
+    threshold: float = 0.02,
+    relative_threshold: float = 0.10,
+    neighborhood_ms: float = 2000.0,
+    frame_length: int = 1024,
+    hop_length: int = 256,
+) -> torch.Tensor:
+    """Clamp internal silences longer than ``max_gap_ms`` down to ``target_gap_ms``.
+
+    TTS models with autoprosoody (e.g. VoxCPM2 on Russian) often emit
+    ~1-second pauses after ``!`` / ``.`` that sound like a stutter when
+    followed by another sentence. This finds any mid-stream silence
+    exceeding ``max_gap_ms`` and shortens its centre, keeping the
+    surrounding audio intact. Leading and trailing silences are left
+    alone (use ``trim_silence`` for that).
+
+    Defaults were chosen to preserve natural-sounding punctuation pauses
+    (~180 ms) while removing the unnatural 0.5–1 s gaps the model
+    generates. If the result still sounds choppy, raise ``target_gap_ms``
+    or disable clamping via ``PipelineConfig``.
+
+    Args:
+        waveform: 1-D or 2-D torch tensor (channels × samples).
+        sample_rate: Sample rate in Hz.
+        max_gap_ms: Silences longer than this get shortened.
+        target_gap_ms: New length of shortened silences.
+        threshold: RMS threshold below which a frame is "silent".
+        relative_threshold: Fraction of local peak used as an adaptive floor.
+        neighborhood_ms: Size of the local window for the adaptive floor.
+        frame_length, hop_length: STFT-ish parameters for the scan.
+    """
+    if waveform.dim() > 1:
+        waveform = waveform.squeeze(0)
+
+    if waveform.numel() == 0:
+        return waveform
+
+    abs_wave = waveform.abs()
+    n_frames = (len(waveform) - frame_length) // hop_length + 1
+    if n_frames <= 0:
+        return waveform
+
+    frames = abs_wave.unfold(0, frame_length, hop_length)
+    frame_energy = frames.pow(2).mean(dim=1).sqrt()
+
+    # Adaptive silence test: a frame is silent iff its RMS is below the
+    # absolute floor OR below ``relative_threshold × local_peak``. The
+    # ratio branch lets the threshold ride with the local loudness, so the
+    # natural fade-out of a syllable (RMS ≈ 0.005–0.04) is no longer
+    # mistaken for a model-generated pause (RMS < 0.001, an order of
+    # magnitude below the surrounding speech peak).
+    nb_frames = max(1, int(neighborhood_ms * sample_rate / 1000 / hop_length))
+    pad = nb_frames
+    padded = torch.nn.functional.pad(frame_energy, (pad, pad), value=0.0)
+    unfolded = padded.unfold(0, 2 * nb_frames + 1, 1)
+    local_peak = unfolded.max(dim=1).values
+    adaptive_floor = relative_threshold * local_peak
+    silent = (frame_energy < threshold) | (frame_energy < adaptive_floor)
+
+    if not silent.any():
+        return waveform
+
+    max_gap_frames = max(1, int(max_gap_ms * sample_rate / 1000 / hop_length))
+    target_gap_frames = max(1, int(target_gap_ms * sample_rate / 1000 / hop_length))
+
+    # Walk segments: emit each speech/silence segment, but shrink
+    # silences longer than max_gap_frames down to target_gap_frames.
+    pieces: list[torch.Tensor] = []
+    in_silence = bool(silent[0].item())
+    seg_start_frame = 0
+
+    for i in range(1, n_frames + 1):
+        cur_silent = bool(silent[i].item()) if i < n_frames else (not in_silence)
+        if cur_silent == in_silence:
+            continue
+        seg_start_sample = seg_start_frame * hop_length
+        seg_end_sample = i * hop_length
+        if in_silence and (i - seg_start_frame) > max_gap_frames:
+            seg_end_sample = seg_start_sample + target_gap_frames * hop_length
+        pieces.append(waveform[seg_start_sample:seg_end_sample])
+        in_silence = cur_silent
+        seg_start_frame = i
+
+    if not pieces:
+        return waveform
+    return torch.cat(pieces, dim=-1)

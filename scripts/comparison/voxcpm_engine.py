@@ -1,7 +1,7 @@
 """VoxCPM2 (OpenBMB) engine wrapper for comparison tests.
 
-Apache-2.0 license. Must run in .venv-voxcpm — see voxcpm_synth.py
-for the torch-version rationale.
+Apache-2.0 license. See voxcpm_synth.py for the torch-version
+rationale.
 """
 
 from __future__ import annotations

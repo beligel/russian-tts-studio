@@ -82,6 +82,65 @@ def _start_watchdog_thread(
     return thread
 
 
+def _start_heartbeat_watchdog(timeout: float = 120.0, grace_period: float = 60.0) -> threading.Thread:
+    """Background thread that exits the process if the browser UI stops
+    sending heartbeats.
+
+    ``timeout`` is the maximum allowed silence since the last
+    ``/api/heartbeat`` or ``/api/status`` call. The UI pings every 5 s.
+    Default is 120s (not 15s) because:
+    - VoxCPM2 synthesis on CPU takes 30-60 seconds
+    - During synthesis the event loop is blocked and heartbeat
+      requests can't be processed
+    - The old 15s timeout killed the server mid-synthesis
+
+    ``grace_period`` is the initial startup window (60s by default)
+    during which the watchdog does NOT enforce the heartbeat rule.
+
+    The watchdog also checks ``_State.active_requests`` — if there are
+    active HTTP requests in flight (e.g. synthesis), it will NOT kill
+    the server even if heartbeat is stale.
+
+    Returns the started daemon thread.
+    """
+    from web.app import _State  # type: ignore[import-not-found]
+
+    def _watch() -> None:
+        # Wait until the first heartbeat arrives before enforcing the rule,
+        # so the server doesn't exit immediately on startup before the page
+        # has loaded.
+        while getattr(_State, "last_heartbeat", 0.0) == 0.0:
+            time.sleep(0.5)
+        # Grace period: after the first heartbeat, give the UI extra
+        # time to stabilise before enforcing the timeout.
+        grace_deadline = time.time() + grace_period
+        while True:
+            now = time.time()
+            if now < grace_deadline:
+                # Still in grace period — just wait
+                time.sleep(1.0)
+                continue
+            # Check if there are active requests (synthesis in progress).
+            # If so, don't kill the server even if heartbeat is stale.
+            active = getattr(_State, "active_requests", 0)
+            if active > 0:
+                time.sleep(1.0)
+                continue
+            elapsed = now - _State.last_heartbeat
+            if elapsed > timeout:
+                logger.info(
+                    "No UI heartbeat for %.0fs (active_requests=%d) — "
+                    "browser tab/window was closed, shutting down server",
+                    elapsed, active,
+                )
+                os._exit(0)
+            time.sleep(1.0)
+
+    thread = threading.Thread(target=_watch, name="heartbeat-watchdog", daemon=True)
+    thread.start()
+    return thread
+
+
 def _start_uvicorn_in_thread(
     host: str,
     port: int,
@@ -220,6 +279,11 @@ def main() -> int:
         action="store_true",
         help="Open in the default system browser instead of a native WebView.",
     )
+    parser.add_argument(
+        "--no-watchdog",
+        action="store_true",
+        help="Disable the heartbeat watchdog (server stays alive without UI).",
+    )
     args = parser.parse_args()
 
     url = f"http://{args.host}:{args.port}"
@@ -250,6 +314,11 @@ def main() -> int:
 
     if args.no_window:
         logger.info("Running in --no-window mode. Press Ctrl+C to stop.")
+        if uvicorn_thread is not None and uvicorn_server is not None:
+            if not getattr(args, "no_watchdog", False):
+                _start_heartbeat_watchdog()
+            else:
+                logger.info("Heartbeat watchdog disabled (--no-watchdog)")
         try:
             _blocking_wait_with_uvicorn_watchdog(
                 stop_event,
@@ -264,6 +333,11 @@ def main() -> int:
     if args.browser:
         logger.info("Opening %s in the default browser", url)
         webbrowser.open(url)
+        if uvicorn_thread is not None and uvicorn_server is not None:
+            if not getattr(args, "no_watchdog", False):
+                _start_heartbeat_watchdog()
+            else:
+                logger.info("Heartbeat watchdog disabled (--no-watchdog)")
         try:
             _blocking_wait_with_uvicorn_watchdog(
                 stop_event,
@@ -359,7 +433,7 @@ def main() -> int:
     # watchdog above only covers the case where the GUI thread
     # itself is stuck — it doesn't notice if uvicorn dies (e.g.
     # unhandled exception in a request handler, libtorch
-    # segfault during TTS inference, OOM-kill, engine reexec
+    # segfault during TTS inference, OOM-kill, worker crash
     # mishap). While the main thread is blocked in webview.start()
     # we have no way to react from the main thread, so we spawn
     # a *separate* daemon thread whose only job is to call

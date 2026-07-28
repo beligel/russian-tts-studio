@@ -116,106 +116,6 @@ class TestPipelineConfig:
         assert c.enable_fallback is False
 
 
-class TestXTTSSynthesizer:
-    def test_unknown_model(self):
-        from russian_tts_studio.models.xtts_synth import XTTSSynthesizer
-        with pytest.raises(ValueError, match="Unknown XTTS model"):
-            XTTSSynthesizer(model_name="invalid-model")
-
-    def test_supported_models(self):
-        from russian_tts_studio.models.xtts_synth import XTTSSynthesizer
-        assert "xtts-v2" in XTTSSynthesizer.SUPPORTED_MODELS
-
-
-class TestNormalizeTextForXtts:
-    """Cover the typographic-char normaliser that runs before every
-    XTTS inference. The character set is regression-prone — adding a
-    new entry is easy to forget in code review but will break tests
-    for any Russian text the user has quoted."""
-
-    def test_russian_quotes_replaced(self):
-        from russian_tts_studio.models.xtts_synth import _normalize_text_for_xtts
-        # Main offender reported by user.
-        assert _normalize_text_for_xtts('Сказал: «Привет»') == 'Сказал: "Привет"'
-        # German-style „…" quotes too.
-        assert _normalize_text_for_xtts('„Тест"') == '"Тест"'
-        # English smart quotes.
-        assert _normalize_text_for_xtts("‘Hello’") == "'Hello'"
-
-    def test_dashes_and_ellipsis(self):
-        from russian_tts_studio.models.xtts_synth import _normalize_text_for_xtts
-        # Em-dash: replaced with " - " (with spaces) for natural pause.
-        assert _normalize_text_for_xtts("Москва — столица") == "Москва  -  столица"
-        # En-dash: just "-"
-        assert _normalize_text_for_xtts("2024–2025") == "2024-2025"
-        # Ellipsis
-        assert _normalize_text_for_xtts("Подождите…") == "Подождите..."
-
-    def test_invisible_chars_stripped(self):
-        from russian_tts_studio.models.xtts_synth import _normalize_text_for_xtts
-        # NBSP becomes a regular space (it's whitespace, not nothing —
-        # TTS needs a boundary so it doesn't merge "При" and "вет").
-        assert _normalize_text_for_xtts("При\u00A0вет") == "При вет"
-        # Zero-width joiner / BOM are *stripped* (purely invisible, no
-        # semantic meaning, would only confuse the BPE tokenizer).
-        assert _normalize_text_for_xtts("Hello\u200B\uFEFF!") == "Hello!"
-
-    def test_passthrough(self):
-        # Plain Russian / English / numbers / dots / colons stay intact.
-        from russian_tts_studio.models.xtts_synth import _normalize_text_for_xtts as f
-        assert f("Привет, мир! 123.") == "Привет, мир! 123."
-        assert f("Hello, world.") == "Hello, world."
-        assert f("") == ""
-
-    def test_idempotent(self):
-        from russian_tts_studio.models.xtts_synth import _normalize_text_for_xtts
-        # Normalising twice == normalising once (no double-rewrite).
-        once = _normalize_text_for_xtts('Сказал: «Привет» — …')
-        twice = _normalize_text_for_xtts(once)
-        assert once == twice
-
-
-class TestForceLowercaseNoDiacritics:
-    """XTTS-v2 vocab rejects uppercase Cyrillic AND any combining
-    diacritic (both become [UNK]). We lowercase the whole string and
-    strip combining marks before inference. Stress control is *not*
-    attempted here — XTTS simply can't take it."""
-
-    def test_uppercase_lowercased(self):
-        from russian_tts_studio.models.xtts_synth import _force_lowercase_no_diacritics
-        assert _force_lowercase_no_diacritics("ПРИВЕТ") == "привет"
-        assert _force_lowercase_no_diacritics("Hello World") == "hello world"
-        assert _force_lowercase_no_diacritics("iPhone") == "iphone"
-
-    def test_combining_acute_stripped(self):
-        from russian_tts_studio.models.xtts_synth import _force_lowercase_no_diacritics
-        assert _force_lowercase_no_diacritics("за\u0301мок") == "замок"
-        assert _force_lowercase_no_diacritics("а\u0301б\u0300в\u0303") == "абв"
-
-    def test_yo_kept(self):
-        from russian_tts_studio.models.xtts_synth import _force_lowercase_no_diacritics
-        # ё is a full letter, not a combining mark — keep and lowercase.
-        assert _force_lowercase_no_diacritics("Ёжик") == "ёжик"
-        assert _force_lowercase_no_diacritics("Ё") == "ё"
-
-    def test_punctuation_kept(self):
-        from russian_tts_studio.models.xtts_synth import _force_lowercase_no_diacritics
-        assert _force_lowercase_no_diacritics("Привет, мир!") == "привет, мир!"
-        assert _force_lowercase_no_diacritics("...") == "..."
-
-    def test_passthrough(self):
-        from russian_tts_studio.models.xtts_synth import _force_lowercase_no_diacritics
-        assert _force_lowercase_no_diacritics("привет") == "привет"
-        assert _force_lowercase_no_diacritics("123") == "123"
-        assert _force_lowercase_no_diacritics("") == ""
-
-    def test_idempotent(self):
-        from russian_tts_studio.models.xtts_synth import _force_lowercase_no_diacritics
-        once = _force_lowercase_no_diacritics("За\u0301мок И ПРИВЕТ")
-        twice = _force_lowercase_no_diacritics(once)
-        assert once == twice
-
-
 class TestSileroSynthesizer:
     def test_speakers_list(self):
         from russian_tts_studio.models.silero_synth import SileroSynthesizer
@@ -309,6 +209,78 @@ class TestVoxCPMSynthesizer:
         assert s.load_denoiser is True
 
 
+class TestPauseConfig:
+    """PauseConfig.from_metadata must only be enabled when the caller
+    explicitly supplied pause_ms_* keys. Empty metadata (the default when
+    ``enable_prosody=False`` in the UI) must NOT silently fall back to
+    DEFAULT_PAUSE_MS, which caused unwanted pauses on every punctuation
+    mark."""
+
+    def test_word_gap_metadata_is_parsed(self):
+        from russian_tts_studio.utils.prosody import PauseConfig
+        cfg = PauseConfig.from_metadata({"pause_ms_word_gap": 80})
+        assert cfg.word_gap_ms == 80
+        assert cfg.is_enabled() is True
+        # Word gap alone should NOT pull in punctuation defaults. The whole
+        # config must only contain the explicitly requested word gap.
+        assert cfg.comma == 0
+        assert cfg.period == 0
+        assert cfg.exclamation == 0
+
+    def test_word_gap_with_punctuation_preserves_defaults(self):
+        from russian_tts_studio.utils.prosody import PauseConfig, DEFAULT_PAUSE_MS
+        cfg = PauseConfig.from_metadata({
+            "pause_ms_word_gap": 60,
+            "pause_ms_period": 400,
+        })
+        assert cfg.word_gap_ms == 60
+        assert cfg.period == 400
+        # Unset punctuation defaults remain
+        assert cfg.comma == DEFAULT_PAUSE_MS["comma"]
+
+    def test_explicit_zeros_disable_prosody(self):
+        from russian_tts_studio.utils.prosody import PauseConfig
+        cfg = PauseConfig.from_metadata({
+            "pause_ms_comma": 0,
+            "pause_ms_semicolon": 0,
+            "pause_ms_colon": 0,
+            "pause_ms_period": 0,
+            "pause_ms_exclamation": 0,
+            "pause_ms_question": 0,
+            "pause_ms_ellipsis": 0,
+            "pause_ms_word_gap": 0,
+        })
+        assert cfg.is_enabled() is False
+
+    def test_explicit_zeros_without_word_gap_disable_prosody(self):
+        # Regression: before word_gap existed, zeros on all punctuation
+        # meant disabled. That contract must still hold.
+        from russian_tts_studio.utils.prosody import PauseConfig
+        cfg = PauseConfig.from_metadata({
+            "pause_ms_comma": 0,
+            "pause_ms_semicolon": 0,
+            "pause_ms_colon": 0,
+            "pause_ms_period": 0,
+            "pause_ms_exclamation": 0,
+            "pause_ms_question": 0,
+            "pause_ms_ellipsis": 0,
+        })
+        assert cfg.is_enabled() is False
+
+    def test_empty_metadata_means_disabled(self):
+        from russian_tts_studio.utils.prosody import PauseConfig
+        cfg = PauseConfig.from_metadata({})
+        assert cfg.is_enabled() is False
+
+    def test_partial_metadata_still_uses_defaults_for_unset_keys(self):
+        from russian_tts_studio.utils.prosody import PauseConfig, DEFAULT_PAUSE_MS
+        cfg = PauseConfig.from_metadata({"pause_ms_comma": 100})
+        assert cfg.comma == 100
+        # Unset keys keep their defaults
+        assert cfg.period == DEFAULT_PAUSE_MS["period"]
+        assert cfg.is_enabled() is True
+
+
 class TestComparison:
     def test_get_engine_silero(self):
         from scripts.comparison import get_engine
@@ -323,8 +295,8 @@ class TestComparison:
 
     def test_get_engine_voxcpm_does_not_eagerly_import(self):
         # ``get_engine("voxcpm")`` must NOT import voxcpm yet — the
-        # class import is deferred to ``load()`` time. This is the
-        # pattern used for xtts too; see scripts/comparison/__init__.py.
+        # class import is deferred to ``load()`` time. Same pattern
+        # in scripts/comparison/__init__.py.
         from scripts.comparison import get_engine
         eng = get_engine("voxcpm")
         assert eng.name == "voxcpm-2"
