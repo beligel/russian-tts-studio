@@ -17,6 +17,7 @@ const API = {
   heartbeat: '/api/heartbeat',
   postprocess: '/api/postprocess',
   audio: (n) => `/api/audio/${n}`,
+  import: '/api/import',
 };
 
 const state = {
@@ -697,3 +698,110 @@ function applyProsodyPreset(name) {
 // Cache of the last /api/engines response — used by the change handler
 // to update the hint without a re-fetch. Populated by loadEngines().
 let lastLoadedEngines = [];
+
+// ---------------------------------------------------------------------------
+// Text toolbar: file upload + stress mark button
+// ---------------------------------------------------------------------------
+
+// Combining acute accent (U+0301) — placed AFTER a vowel to mark stress.
+const COMBINING_ACUTE = '\u0301';
+// Russian + Latin vowels (lowercase + uppercase) for stress validation.
+const VOWELS = 'аеёиоуыэюяaeiouyАЕЁИОУЫЭЮЯAEIOUY';
+
+async function uploadTextFile(file) {
+  // Upload .txt / .md / .docx → /api/import → insert text into textarea.
+  const formData = new FormData();
+  formData.append('file', file);
+  try {
+    showToast(`Импорт ${file.name}…`);
+    const resp = await fetch(API.import, { method: 'POST', body: formData });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${resp.status}`);
+    }
+    const data = await resp.json();
+    const ta = $('textInput');
+    if (ta && data.text) {
+      ta.value = data.text;
+      showToast(`Импортирован ${data.source_format}: ${data.char_count} симв.` +
+                (data.chapters && data.chapters.length > 1 ? `, ${data.chapters.length} глав` : ''),
+                'success');
+    }
+  } catch (e) {
+    showToast(`Ошибка импорта: ${e.message}`, 'error');
+  }
+}
+
+function applyStressToSelection() {
+  // Take the selected text in the textarea. Two cases:
+  //  1. Single vowel selected → insert U+0301 right after it.
+  //  2. Word/phrase selected → wrap as {{stress "word"}} markup.
+  // If nothing is selected, show a hint toast.
+  const ta = $('textInput');
+  if (!ta) return;
+  const start = ta.selectionStart;
+  const end = ta.selectionEnd;
+  const selected = ta.value.substring(start, end);
+
+  if (!selected) {
+    showToast('Выделите гласную букву или слово, затем нажмите «Ударение»', 'error');
+    return;
+  }
+
+  // Case 1: single character that is a vowel → insert combining acute.
+  if (selected.length === 1 && VOWELS.includes(selected)) {
+    const newVal = ta.value.substring(0, start) + selected + COMBINING_ACUTE + ta.value.substring(end);
+    ta.value = newVal;
+    // Place cursor after the vowel + combining mark (2 chars inserted).
+    ta.selectionStart = start + 2;
+    ta.selectionEnd = start + 2;
+    ta.focus();
+    showToast(`Ударение поставлено на «${selected}»`, 'success');
+    return;
+  }
+
+  // Case 2: longer selection → wrap as {{stress "..."}} markup.
+  // Strip any existing combining acute from the selection first so
+  // we don't double-apply. If the user selected a word that already
+  // has a stress mark, the markup form uses the plain word.
+  const plainWord = selected.replace(/\u0301/g, '');
+  const markup = `{{stress "${plainWord}"}}`;
+  const newVal = ta.value.substring(0, start) + markup + ta.value.substring(end);
+  ta.value = newVal;
+  // Place cursor after the markup.
+  ta.selectionStart = start + markup.length;
+  ta.selectionEnd = start + markup.length;
+  ta.focus();
+  showToast(`Вставлено {{stress "${plainWord}"}}`, 'success');
+}
+
+// Wire up the toolbar buttons on DOMContentLoaded.
+document.addEventListener('DOMContentLoaded', () => {
+  // File upload → textarea
+  const fileInput = $('textFileInput');
+  if (fileInput) {
+    fileInput.addEventListener('change', (e) => {
+      if (e.target.files && e.target.files[0]) {
+        uploadTextFile(e.target.files[0]);
+        e.target.value = '';  // reset so the same file can be re-uploaded
+      }
+    });
+  }
+
+  // Stress mark button
+  const stressBtn = $('stressBtn');
+  if (stressBtn) {
+    stressBtn.addEventListener('click', applyStressToSelection);
+  }
+
+  // Keyboard shortcut: Ctrl+Shift+A (A for Accent) on the textarea.
+  const ta = $('textInput');
+  if (ta) {
+    ta.addEventListener('keydown', (e) => {
+      if (e.ctrlKey && e.shiftKey && (e.key === 'A' || e.key === 'a' || e.key === 'F')) {
+        e.preventDefault();
+        applyStressToSelection();
+      }
+    });
+  }
+});

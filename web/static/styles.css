@@ -171,6 +171,16 @@ textarea { width: 100%; resize: vertical; }
 .btn-primary:hover { background: var(--primary-hover); border-color: var(--primary-hover); }
 .btn-secondary { background: transparent; }
 .btn-large { width: 100%; padding: 12px; font-size: 15px; font-weight: 600; margin-top: 12px; }
+.btn-sm { padding: 4px 10px; font-size: 12px; }
+
+/* Toolbar above the text textarea — file upload + stress mark button */
+.text-toolbar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+.text-toolbar .btn-sm { white-space: nowrap; }
 
 /* Voice engine toggle — large, always-visible button group */
 .engine-switch {

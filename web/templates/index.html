@@ -35,6 +35,15 @@
       <div class="grid-2">
         <div class="card">
           <h2>Текст для синтеза</h2>
+          <div class="text-toolbar">
+            <label class="btn btn-secondary btn-sm">
+              📄 Загрузить файл
+              <input type="file" id="textFileInput" accept=".txt,.md,.markdown,.docx" hidden />
+            </label>
+            <button class="btn btn-secondary btn-sm" id="stressBtn" title="Выделите гласную и нажмите — поставит ударение (U+0301)">
+              ◌́ Ударение
+            </button>
+          </div>
           <textarea
             id="textInput"
             placeholder="Введите текст на русском…"
